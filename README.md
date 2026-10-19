@@ -638,3 +638,8 @@ against the recorder's converter, the stereo deinterleave, the WAV
 header validation accept/reject table (foreign files are refused),
 the newest-first take window with gappy numbering and the slot
 mapping, and the next-slot advance with the wrap at the newest take.
+
+## Notes from the creator
+While wanting to create a real instrument this was also an experiment to fully "vibe code" with Github Copilot in VS Code. It therefore comes with all the "downsides" vibe coding generates (code that is sometimes hard to read and maintain and tons of comments in the code)
+
+Also, I also want to give a shout out to the wonderful people of [CHOMPI Club](https://github.com/CHOMPI-Club/CHOMPI) for making CHOMPI firmwares available for the public to explore. 
