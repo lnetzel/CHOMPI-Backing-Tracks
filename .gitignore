@@ -1,0 +1,19 @@
+# Firmware build output
+code/src/build/
+code/tests/*.exe
+*.o
+
+# Lib build intermediates (prebuilt .a files ARE committed)
+code/libs/*/build/*
+!code/libs/*/build/*.a
+
+# macOS
+.DS_Store
+._*
+__MACOSX/
+Icon?
+
+# Editor state
+.cortex-debug.*.state.json
+.vs/
+.vscode/settings.json
