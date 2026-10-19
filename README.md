@@ -6,8 +6,9 @@ tonewheel-style Character, Hammond-style percussion on the Play/Pause
 key, fuzz distortion with a tone control, a rotary-speaker stage, a
 warm stereo BBD-inspired delay, a compact vintage-1960s-inspired plate
 reverb, global 5 Hz pitch vibrato, a Modulation Mode that drifts
-each pipe's volume and Character slowly and independently, and 15
+each pipe's volume and Character and pitch slowly and independently, and 15
 SD-card preset slots.
+Included is also a simple recorder where you can record jams directly to the SD card as 48kHz, 16 bit *.wav files.
 
 ## Controls
 
@@ -509,20 +510,7 @@ pulled mid-playback, the mode exits with a ~2 s red flash.
 
 ## MIDI (channel 1, DIN and USB)
 
-| CC | Function |
-| --- | --- |
-| 1 | Vibrato depth, modulation wheel (0-127 -> 0-50 cents, rounded) |
-| 70-73 | Pipe 1-4 levels (0-127 -> 0-32 steps, rounded) |
-| 74-77 | Pipe 1-4 Character amounts (0-127 -> 0-64 steps, rounded) |
-
-Notes are received and sent; CCs are both received and sent (outgoing CCs
-reflect only the adjusted pipe). Incoming CCs set values silently and never
-trigger the white-key value bars - the bars follow local controls only.
-
-**Semantic change:** CC 74-77 previously selected a sine->square waveform
-morph. That morph is removed; old automation that selected "square"
-(CC value 127) now selects maximum Character. The sine-only sound at
-Character 0 is unchanged.
+Features a full midi implementation for all preset parameters. read more in [midi.md](midi.md)
 
 ## Signal flow
 
