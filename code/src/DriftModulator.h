@@ -45,7 +45,7 @@ class DriftModulator
 
     /** Modulation window half-width at 100% amount (+/-20%, i.e. a 40%
      *  total full-scale window); the amount scales the half-width. */
-    static constexpr float kFullScaleHalfWidth = .20f;
+    static constexpr float kFullScaleHalfWidth = .50f;
 
     /** seed must be distinct per instance; 0 is remapped (xorshift32's
      *  all-zero state is a fixed point). The start phase, direction and
