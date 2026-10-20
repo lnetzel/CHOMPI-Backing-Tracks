@@ -1,101 +1,40 @@
-# Native DSP tests for chompi-pipes (host compiler only, no MCU/Daisy deps).
+# Host tests for backing-tracks (no MCU/Daisy dependencies).
 # Usage: make -C code/tests test
 
 CXX      ?= g++
 CC       ?= gcc
 CXXFLAGS ?= -std=c++14 -O2 -Wall -Wextra -I../src
 
-# coreJSON is vendored in this repo's code/libs (needed by OrganPreset.h)
+# coreJSON is vendored in this repo's code/libs (needed by BackingSet.h)
 COREJSON_DIR = ../libs/coreJSON/source
 
-parameter_steps_test: parameter_steps_test.cpp ../src/ParameterSteps.h
+test: backing_mixer_test backing_format_test backing_timing_test backing_transport_test backing_settings_test
+	./backing_mixer_test
+	./backing_format_test
+	./backing_timing_test
+	./backing_transport_test
+	./backing_settings_test
+
+backing_mixer_test: backing_mixer_test.cpp ../src/BackingMixer.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-test: parameter_steps_test tonewheel_character_test plate_reverb_test distortion_test vibrato_test envelope_map_test drift_modulator_test organ_preset_test mod_dest_test percussion_test stereo_bbd_delay_test sine_lut_test sd_recorder_test sd_player_test midi_cc_map_test
-	./parameter_steps_test
-	./tonewheel_character_test
-	./plate_reverb_test
-	./distortion_test
-	./vibrato_test
-	./envelope_map_test
-	./drift_modulator_test
-	./organ_preset_test
-	./mod_dest_test
-	./percussion_test
-	./stereo_bbd_delay_test
-	./sine_lut_test
-	./sd_recorder_test
-	./sd_player_test
-	./midi_cc_map_test
+backing_format_test: backing_format_test.cpp ../src/BackingSet.h ../src/BackingWav.h ../libs/coreJSON/source/core_json.c
+	$(CC) -std=c99 -O2 -I$(COREJSON_DIR)/include -c $(COREJSON_DIR)/core_json.c -o backing_core_json_test.o
+	$(CXX) $(CXXFLAGS) -I$(COREJSON_DIR)/include -o $@ $< backing_core_json_test.o -lm
+	rm -f backing_core_json_test.o
 
-tonewheel_character_test: tonewheel_character_test.cpp ../src/TonewheelCharacter.h
+backing_timing_test: backing_timing_test.cpp ../src/BackingTiming.h ../src/BackingSet.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-plate_reverb_test: plate_reverb_test.cpp ../src/PlateReverb.h
+backing_transport_test: backing_transport_test.cpp ../src/BackingTransport.h ../src/BackingFeedback.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-distortion_test: distortion_test.cpp ../src/Distortion.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-vibrato_test: vibrato_test.cpp ../src/Vibrato.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-envelope_map_test: envelope_map_test.cpp ../src/EnvelopeMap.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-drift_modulator_test: drift_modulator_test.cpp ../src/DriftModulator.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-organ_preset_test: organ_preset_test.cpp ../src/OrganPreset.h ../src/ParameterSteps.h
-	$(CC) -std=c99 -O2 -I$(COREJSON_DIR)/include -c $(COREJSON_DIR)/core_json.c -o core_json_test.o
-	$(CXX) $(CXXFLAGS) -I$(COREJSON_DIR)/include -o $@ $< core_json_test.o
-	rm -f core_json_test.o
-
-mod_dest_test: mod_dest_test.cpp ../src/ModDest.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-# percussion_test includes OrganEngine.h (engine integration tests), so it
-# needs DaisySP's headers (daisysp.h for fonepole; everything the engine
-# uses is header-inline since the voice oscillators moved to SineLut.h).
-# PlateReverb.h pulls the vendored fx_engine.h from ../src. Vendored
-# headers trigger -Wunused-parameter etc.
-DAISYSP_SRC = ../libs/DaisySP/Source
-percussion_test: percussion_test.cpp ../src/Percussion.h ../src/OrganEngine.h ../src/OrganPreset.h ../src/ParameterSteps.h
-	$(CXX) $(CXXFLAGS) -I$(DAISYSP_SRC) -I$(DAISYSP_SRC)/Utility \
-		-I$(COREJSON_DIR)/include -Wno-unused-parameter -o $@ $<
-
-stereo_bbd_delay_test: stereo_bbd_delay_test.cpp ../src/StereoBbdDelay.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-sine_lut_test: sine_lut_test.cpp ../src/SineLut.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-sd_recorder_test: sd_recorder_test.cpp ../src/SdRecorder.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-sd_player_test: sd_player_test.cpp ../src/SdPlayer.h ../src/SdRecorder.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-midi_cc_map_test: midi_cc_map_test.cpp ../src/MidiCcMap.h ../src/ParameterSteps.h
-	$(CXX) $(CXXFLAGS) -o $@ $<
-
-# The vendored fx_engine.h triggers -Wunused-parameter from its DelayLine
-# template parameters; keep the test output readable without editing it.
-plate_reverb_test: CXXFLAGS += -Wno-unused-parameter
+backing_settings_test: backing_settings_test.cpp ../src/BackingSettings.h ../libs/coreJSON/source/core_json.c
+	$(CC) -std=c99 -O2 -I$(COREJSON_DIR)/include -c $(COREJSON_DIR)/core_json.c -o backing_settings_core_json_test.o
+	$(CXX) $(CXXFLAGS) -I$(COREJSON_DIR)/include -o $@ $< backing_settings_core_json_test.o
+	rm -f backing_settings_core_json_test.o
 
 clean:
-	rm -f parameter_steps_test parameter_steps_test.exe \
-		tonewheel_character_test tonewheel_character_test.exe \
-		plate_reverb_test plate_reverb_test.exe \
-		distortion_test distortion_test.exe \
-		vibrato_test vibrato_test.exe \
-		envelope_map_test envelope_map_test.exe \
-		drift_modulator_test drift_modulator_test.exe \
-		organ_preset_test organ_preset_test.exe core_json_test.o \
-		mod_dest_test mod_dest_test.exe \
-		percussion_test percussion_test.exe \
-		stereo_bbd_delay_test stereo_bbd_delay_test.exe \
-		sine_lut_test sine_lut_test.exe \
-		sd_recorder_test sd_recorder_test.exe \
-	sd_player_test sd_player_test.exe \
+	rm -f backing_mixer_test backing_mixer_test.exe backing_format_test backing_format_test.exe backing_timing_test backing_timing_test.exe backing_transport_test backing_transport_test.exe backing_settings_test backing_settings_test.exe backing_core_json_test.o \
+		core_json_test.o backing_settings_core_json_test.o midi_cc_map_test.exe
 .PHONY: test clean

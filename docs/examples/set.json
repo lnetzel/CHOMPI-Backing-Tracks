@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "songs": [
+    {
+      "file": "TRACKS/01-intro.wav",
+      "bpm": 120,
+      "meter": [4, 4],
+      "first_downbeat_ms": 0,
+      "advance": "auto"
+    },
+    {
+      "file": "TRACKS/02-song.wav",
+      "bpm": 98.5,
+      "meter": [6, 8],
+      "first_downbeat_ms": 350,
+      "advance": "wait"
+    }
+  ]
+}

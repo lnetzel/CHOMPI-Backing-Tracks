@@ -1,5 +1,5 @@
 /** @file hardware.h
- *  @brief Hardware abstraction layer for the CHOMPI synth.
+ *  @brief Hardware abstraction layer for CHOMPI-compatible firmware.
  */
 #pragma once
 #include "daisy_seed.h"
@@ -103,10 +103,9 @@ namespace chompi
 
             /** secondary audio */
             /** Configure the SAI2 peripheral for the secondary codec.
-             *  CHOMPI has two stereo output pairs (headphone + master, see the
-             *  channel breakdown comment above AudioCallback in chompi_main.cpp) driven
-             *  off two SAI peripherals in sync: the Seed's own built-in SAI1 codec
-             *  plus this second external one on SAI2. */
+             *  CHOMPI has two stereo output pairs (headphone + master), driven
+             *  from the Seed's built-in SAI1 codec and this external SAI2 codec
+             *  in sync. */
             SaiHandle::Config external_sai_cfg;
             external_sai_cfg.periph = SaiHandle::Config::Peripheral::SAI_2;
             external_sai_cfg.sr = SaiHandle::Config::SampleRate::SAI_48KHZ;
@@ -257,8 +256,7 @@ namespace chompi
 
         uint32_t batt_level_checkt;
         uint32_t batt_fullt;
-        /** Called periodically from MainLoop() (see chompi_main.cpp) to protect the
-         *  battery from running on too low battery. */
+        /** Called periodically by the foreground loop to protect the battery. */
         void LowBatteryLockoutCheck()
         {
             #if NO_BATT

@@ -133,8 +133,8 @@ of scope.
 
 ## SD configuration and persistence
 
-Use a project-specific directory, represented here as `BACKING/`, never `PIPES/`.
-Its final name follows the new product naming decision.
+Use the project-specific `BACKING-TRACKS/` directory, never `PIPES/`.
+Store WAV files in its `TRACKS/` subdirectory.
 
 Example active set, edited on a computer:
 
@@ -160,7 +160,7 @@ Example active set, edited on a computer:
 }
 ```
 
-- `BACKING/set.json` is read-only to the firmware. It preserves tempo/order across
+- `BACKING-TRACKS/set.json` is read-only to the firmware. It preserves tempo/order across
   power cycles; runtime volume saves never rewrite the user's set metadata.
 - Validate version, required fields, finite values, ranges, entry count, string and
   config size bounds, meter, advance enum, and relative paths. Reject traversal,
