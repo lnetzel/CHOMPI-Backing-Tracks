@@ -8,7 +8,11 @@ CXXFLAGS ?= -std=c++14 -O2 -Wall -Wextra -I../src
 # coreJSON is vendored in this repo's code/libs (needed by OrganPreset.h)
 COREJSON_DIR = ../libs/coreJSON/source
 
-test: tonewheel_character_test plate_reverb_test distortion_test vibrato_test envelope_map_test drift_modulator_test organ_preset_test mod_dest_test percussion_test stereo_bbd_delay_test sine_lut_test sd_recorder_test sd_player_test midi_cc_map_test
+parameter_steps_test: parameter_steps_test.cpp ../src/ParameterSteps.h
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+test: parameter_steps_test tonewheel_character_test plate_reverb_test distortion_test vibrato_test envelope_map_test drift_modulator_test organ_preset_test mod_dest_test percussion_test stereo_bbd_delay_test sine_lut_test sd_recorder_test sd_player_test midi_cc_map_test
+	./parameter_steps_test
 	./tonewheel_character_test
 	./plate_reverb_test
 	./distortion_test
@@ -42,7 +46,7 @@ envelope_map_test: envelope_map_test.cpp ../src/EnvelopeMap.h
 drift_modulator_test: drift_modulator_test.cpp ../src/DriftModulator.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-organ_preset_test: organ_preset_test.cpp ../src/OrganPreset.h
+organ_preset_test: organ_preset_test.cpp ../src/OrganPreset.h ../src/ParameterSteps.h
 	$(CC) -std=c99 -O2 -I$(COREJSON_DIR)/include -c $(COREJSON_DIR)/core_json.c -o core_json_test.o
 	$(CXX) $(CXXFLAGS) -I$(COREJSON_DIR)/include -o $@ $< core_json_test.o
 	rm -f core_json_test.o
@@ -56,9 +60,9 @@ mod_dest_test: mod_dest_test.cpp ../src/ModDest.h
 # PlateReverb.h pulls the vendored fx_engine.h from ../src. Vendored
 # headers trigger -Wunused-parameter etc.
 DAISYSP_SRC = ../libs/DaisySP/Source
-percussion_test: percussion_test.cpp ../src/Percussion.h ../src/OrganEngine.h
+percussion_test: percussion_test.cpp ../src/Percussion.h ../src/OrganEngine.h ../src/OrganPreset.h ../src/ParameterSteps.h
 	$(CXX) $(CXXFLAGS) -I$(DAISYSP_SRC) -I$(DAISYSP_SRC)/Utility \
-		-Wno-unused-parameter -o $@ $<
+		-I$(COREJSON_DIR)/include -Wno-unused-parameter -o $@ $<
 
 stereo_bbd_delay_test: stereo_bbd_delay_test.cpp ../src/StereoBbdDelay.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
@@ -72,7 +76,7 @@ sd_recorder_test: sd_recorder_test.cpp ../src/SdRecorder.h
 sd_player_test: sd_player_test.cpp ../src/SdPlayer.h ../src/SdRecorder.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-midi_cc_map_test: midi_cc_map_test.cpp ../src/MidiCcMap.h
+midi_cc_map_test: midi_cc_map_test.cpp ../src/MidiCcMap.h ../src/ParameterSteps.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 # The vendored fx_engine.h triggers -Wunused-parameter from its DelayLine
@@ -80,7 +84,8 @@ midi_cc_map_test: midi_cc_map_test.cpp ../src/MidiCcMap.h
 plate_reverb_test: CXXFLAGS += -Wno-unused-parameter
 
 clean:
-	rm -f tonewheel_character_test tonewheel_character_test.exe \
+	rm -f parameter_steps_test parameter_steps_test.exe \
+		tonewheel_character_test tonewheel_character_test.exe \
 		plate_reverb_test plate_reverb_test.exe \
 		distortion_test distortion_test.exe \
 		vibrato_test vibrato_test.exe \

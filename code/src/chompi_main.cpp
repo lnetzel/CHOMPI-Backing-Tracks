@@ -598,7 +598,7 @@ static void ApplyPresetLive(const OrganPreset &preset)
         cc_character_step_[p]  = engine.GetPipeCharacterStep(p);
         cc_character_dirty_[p] = true;
     }
-    cc_vibrato_step_  = engine.GetVibratoDepth();
+    cc_vibrato_step_  = engine.GetVibratoDepthStep();
     cc_vibrato_dirty_ = true;
     bar_pipe_  = -1; /* cancel any active value bar */
     bar_until_ = 0;
@@ -636,6 +636,7 @@ static void PresetShiftConfirm()
                 OrganPreset p;
                 CaptureFromEngine(p, engine);
                 preset_bank_.Save(preset_sel_slot_, p);
+                preset_storage_.ClearIncompatibleSlot(preset_sel_slot_);
                 preset_current_ = preset_sel_slot_;
                 preset_mode_    = kPresetSaving;
                 preset_anim_t_  = System::GetNow();
@@ -645,6 +646,7 @@ static void PresetShiftConfirm()
             if(preset_sel_slot_ >= 0)
             {
                 preset_bank_.Erase(preset_sel_slot_);
+                preset_storage_.ClearIncompatibleSlot(preset_sel_slot_);
                 if(preset_current_ == preset_sel_slot_)
                     preset_current_ = -1; /* deleting the current slot
                                            * clears "current" */
@@ -656,6 +658,7 @@ static void PresetShiftConfirm()
             if(preset_sel_slot_ >= 0 && preset_copy_src_ >= 0)
             {
                 preset_bank_.Copy(preset_copy_src_, preset_sel_slot_);
+                preset_storage_.ClearIncompatibleSlot(preset_sel_slot_);
                 preset_mode_   = kPresetCopying;
                 preset_anim_t_ = System::GetNow();
             }
@@ -1496,8 +1499,7 @@ static void PollControls()
                  * bar - the take window owns the white keys) */
                 if(!shift_held_)
                 {
-                    float g = engine.GetMasterGain() + delta * .01f;
-                    engine.SetMasterGain(g);
+                    engine.SetMasterStep(engine.GetMasterStep() + delta);
                 }
             }
             else if(shift_held_)
@@ -1511,8 +1513,7 @@ static void PollControls()
                      * one-pole stages, ~12 dB/octave). The tone shows
                      * as a red value bar for 500 ms like page 3's
                      * decay bar; the amount is not touched. */
-                    engine.SetDriveTonePercent(engine.GetDriveTonePercent()
-                                               + delta);
+                    engine.SetDriveToneStep(engine.GetDriveToneStep() + delta);
                     bar_pipe_  = kVolBar;
                     bar_page_  = kVolBarTone;
                     bar_until_ = System::GetNow() + 500;
@@ -1534,8 +1535,7 @@ static void PollControls()
                      * click, clamped 40..500 ms; the read position
                      * slews with a smooth BBD-like pitch glide, the
                      * echo history is never cleared */
-                    engine.SetDelayTimeMs(engine.GetDelayTimeMs()
-                                          + delta * 5);
+                    engine.SetDelayTimeStep(engine.GetDelayTimeStep() + delta);
                     bar_pipe_  = kVolBar;
                     bar_page_  = kVolBarDelayTime;
                     bar_until_ = System::GetNow() + 500;
@@ -1546,7 +1546,7 @@ static void PollControls()
                      * The bar centers on white key 8: off-center spans
                      * red toward the offset direction, exactly
                      * centered is green */
-                    engine.AddFineTuneCents(delta);
+                    engine.AddFineTuneStep(delta);
                     bar_pipe_  = kVolBar;
                     bar_page_  = kVolBarFineTune;
                     bar_until_ = System::GetNow() + 500;
@@ -1567,8 +1567,7 @@ static void PollControls()
                  * 0..50% (0% is exact dry); above 50 the mix locks at
                  * 50% and the feedback rises 35%..100%, so a full bar
                  * is sustained "full delay feedback" */
-                engine.SetDelayMixPercent(engine.GetDelayMixPercent()
-                                          + delta);
+                engine.SetDelayMixStep(engine.GetDelayMixStep() + delta);
                 bar_pipe_  = kVolBar;
                 bar_page_  = kVolPageDelay;
                 bar_until_ = System::GetNow() + 500;
@@ -1584,9 +1583,7 @@ static void PollControls()
             }
             else
             {
-                /* existing CHOMPI volume-knob behaviour: 100 clicks, 0..1 */
-                float g = engine.GetMasterGain() + delta * .01f;
-                engine.SetMasterGain(g);
+                engine.SetMasterStep(engine.GetMasterStep() + delta);
                 bar_pipe_  = kVolBar;
                 bar_page_  = kVolPageMaster;
                 bar_until_ = System::GetNow() + 500;
@@ -1608,8 +1605,9 @@ static void PollControls()
             else if(wheel_vibrato_mode_)
             {
                 /* wheel in vibrato mode: depth 0..50 cents peak */
-                engine.SetVibratoDepth(engine.GetVibratoDepth() + delta);
-                cc_vibrato_step_  = engine.GetVibratoDepth();
+                engine.SetVibratoDepthStep(engine.GetVibratoDepthStep()
+                                           + delta);
+                cc_vibrato_step_  = engine.GetVibratoDepthStep();
                 cc_vibrato_dirty_ = true; /* coalesced, sent in MainLoop */
                 bar_pipe_  = kRotaryBar;
                 bar_page_  = kWheelBarVibrato;
@@ -1775,11 +1773,11 @@ static void PollControls()
                         }
                         case 2: /* pipe length */
                         {
-                            engine.SetPipeLengthOctave(
-                                p, engine.GetPipeLengthOctave(p) + delta);
-                            const int v = engine.GetPipeLengthOctave(p);
+                            engine.SetPipeLengthStep(
+                                p, engine.GetPipeLengthStep(p) + delta);
+                            const int v = engine.GetPipeLengthStep(p);
                             for(int q = 0; q < OrganEngine::kNumPipes; q++)
-                                engine.SetPipeLengthOctave(q, v);
+                                engine.SetPipeLengthStep(q, v);
                             break;
                         }
                         default: /* level */
@@ -1811,8 +1809,8 @@ static void PollControls()
                                 = true; /* coalesced, sent in MainLoop */
                             break;
                         case 2: /* pipe length */
-                            engine.SetPipeLengthOctave(
-                                p, engine.GetPipeLengthOctave(p) + delta);
+                            engine.SetPipeLengthStep(
+                                p, engine.GetPipeLengthStep(p) + delta);
                             break;
                         default: /* level */
                             engine.SetPipeStep(p, engine.GetPipeStep(p) + delta);
@@ -2011,6 +2009,10 @@ static void UpdateLeds()
                                       * copy dest), blinking white
                                       * (erase / copy source) */
             }
+            else if(preset_storage_.IsIncompatibleSlot(w) && pre_blink)
+            {
+                r = 1.f; /* unsupported preset schema */
+            }
             else if(filled)
             {
                 if(save_like)
@@ -2108,10 +2110,10 @@ static void UpdateLeds()
                 /* volume-knob page 1, SHIFT+turn: fine tune +/-50
                  * cents; lit = the offset in keys (0..7) from the
                  * center white key (the custom center-out draw below) */
-                int cents = engine.GetFineTuneCents();
-                if(cents < 0)
-                    cents = -cents;
-                lit  = (cents * 7 + 25) / 50;
+                int offset = engine.GetFineTuneStep() - 16;
+                if(offset < 0)
+                    offset = -offset;
+                lit  = (offset * 7 + 8) / 16;
                 kind = kBarFineTune;
             }
             else if(bar_page_ == kVolBarTone)
@@ -2119,28 +2121,21 @@ static void UpdateLeds()
                 /* volume-knob page 2, SHIFT+turn: distortion tone
                  * percent across the 15 white keys, same red as the
                  * overdrive bar */
-                lit  = (engine.GetDriveTonePercent() * kNumWhiteKeys + 50)
-                       / 100;
+                  lit  = (engine.GetDriveToneStep() * kNumWhiteKeys + 16) / 32;
                 kind = kBarDrive;
             }
             else if(bar_page_ == kVolBarDecay)
             {
                 /* volume-knob page 4, SHIFT+turn: reverb decay step
                  * (log-spaced 0.2..20 s) */
-                lit  = (engine.GetReverbDecayStep() * kNumWhiteKeys + 50)
-                       / 100;
+                  lit  = (engine.GetReverbDecayStep() * kNumWhiteKeys + 16) / 32;
                 kind = kBarReverb;
             }
             else if(bar_page_ == kVolBarDelayTime)
             {
                 /* volume-knob page 3, SHIFT+turn: delay time, 40..500 ms
                  * mapped to the 15 white keys */
-                lit  = ((engine.GetDelayTimeMs()
-                         - OrganEngine::kMinDelayTimeMs)
-                            * kNumWhiteKeys
-                        + 230)
-                       / (OrganEngine::kMaxDelayTimeMs
-                          - OrganEngine::kMinDelayTimeMs);
+                     lit  = (engine.GetDelayTimeStep() * kNumWhiteKeys + 16) / 32;
                 kind = kBarDelay;
             }
             else if(bar_page_ == kVolPageReverb)
@@ -2154,8 +2149,7 @@ static void UpdateLeds()
             {
                 /* volume-knob page 3: combined delay mix/feedback
                  * (0..50 = mix 0..50%, 50..100 = feedback 35%..100%) */
-                lit  = (engine.GetDelayMixPercent() * kNumWhiteKeys + 50)
-                       / 100;
+                  lit  = (engine.GetDelayMixStep() * kNumWhiteKeys + 16) / 32;
                 kind = kBarDelay;
             }
             else if(bar_page_ == kVolPageDrive)
@@ -2167,8 +2161,7 @@ static void UpdateLeds()
             }
             else
             {
-                lit = static_cast<int>(engine.GetMasterGain() * kNumWhiteKeys
-                                       + .5f);
+                lit = (engine.GetMasterStep() * kNumWhiteKeys + 16) / 32;
             }
         }
         else if(p == kRotaryBar)
@@ -2177,8 +2170,7 @@ static void UpdateLeds()
             {
                 /* wheel in vibrato mode: depth 0..50 cents mapped across
                  * the 15 white keys (not 50 display segments) */
-                lit  = (engine.GetVibratoDepth() * kNumWhiteKeys + 25)
-                       / OrganEngine::kMaxVibratoDepthCents;
+                  lit  = (engine.GetVibratoDepthStep() * kNumWhiteKeys + 16) / 32;
                 kind = kBarVibrato;
             }
             else if(bar_page_ == kWheelBarVibratoDelay)
@@ -2186,8 +2178,7 @@ static void UpdateLeds()
                 /* SHIFT+turn in vibrato mode: note-on delay 0..50 steps
                  * (100 ms each) mapped across the 15 white keys, same
                  * pink as the vibrato-depth bar */
-                lit  = (engine.GetVibratoDelayStep() * kNumWhiteKeys + 25)
-                       / OrganEngine::kMaxVibratoDelaySteps;
+                  lit  = (engine.GetVibratoDelayStep() * kNumWhiteKeys + 16) / 32;
                 kind = kBarVibrato;
             }
             else
@@ -2242,8 +2233,7 @@ static void UpdateLeds()
         }
         else if(bar_page_ == 1)
         {
-            lit  = (engine.GetPipeCharacterStep(p) * kNumWhiteKeys + 32)
-                   / OrganEngine::kMaxCharacterSteps;
+                 lit  = (engine.GetPipeCharacterStep(p) * kNumWhiteKeys + 16) / 32;
             kind = kBarCharacter;
         }
         else if(bar_page_ == 2)
@@ -2500,8 +2490,8 @@ static void UpdateLeds()
             case 1:
             {
                 const float s = .2f
-                                + .8f * engine.GetPipeCharacterStep(p)
-                                      * (1.f / OrganEngine::kMaxCharacterSteps);
+                                  + .8f * engine.GetPipeCharacterStep(p)
+                                      * (1.f / OrganEngine::kMaxSteps);
                 SetPthLedFloat(p + 1, 0.f, 0.f, s); /* blue: Character */
                 break;
             }
@@ -2552,7 +2542,8 @@ static void UpdateLeds()
     else if(vol_page_ == kVolPageDelay)
     {
         const float s = .2f
-                        + .8f * engine.GetDelayMixPercent() * .01f;
+                        + .8f * engine.GetDelayMixStep()
+                                  * (1.f / OrganEngine::kMaxSteps);
         SetPthLedFloat(9, s, s, 0.f); /* yellow */
     }
     else if(vol_page_ == kVolPageDrive)

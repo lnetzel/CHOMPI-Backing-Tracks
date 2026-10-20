@@ -1,8 +1,8 @@
 /** @file MidiHandler.h
  *  @brief MIDI in/out for the organ: fixed channel 1, notes both ways,
  *  and every preset-saved parameter as an incoming CC (CC 1 vibrato depth,
- *  CC 70-73 pipe levels, CC 74-77 pipe Character, plus the blocks up to
- *  CC 115 - the full map and the value conversions live in MidiCcMap.h).
+ *  CC 70-73 pipe levels, CC 74-77 pipe Character, plus the blocks through
+ *  CC 116 - the full map and conversions live in MidiCcMap.h).
  *  Program Change 1-15 loads preset slots (deferred to chompi_main, which
  *  owns the preset bank). Incoming CCs set values silently; the new CCs
  *  are receive-only (CC out stays at the original 9).
@@ -86,40 +86,33 @@ class OrganMidi
                     int             pipe;
                     if(cc == ccmap::kVibratoCc)
                     {
-                        engine_->SetVibratoDepth(
-                            ccmap::CcToSteps(
-                                val,
-                                chompi::OrganEngine::kMaxVibratoDepthCents));
+                        engine_->SetVibratoDepthStep(
+                            ccmap::CcToPosition(val));
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kLevelCcBase)) >= 0)
                     {
                         engine_->SetPipeStep(
                             pipe,
-                            ccmap::CcToSteps(val,
-                                             chompi::OrganEngine::kMaxSteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kCharacterCcBase))
                             >= 0)
                     {
                         engine_->SetPipeCharacterStep(
                             pipe,
-                            ccmap::CcToSteps(
-                                val,
-                                chompi::OrganEngine::kMaxCharacterSteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kAttackCcBase)) >= 0)
                     {
                         engine_->SetPipeAttackStep(
                             pipe,
-                            ccmap::CcToSteps(val,
-                                             chompi::OrganEngine::kMaxEnvSteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kReleaseCcBase)) >= 0)
                     {
                         engine_->SetPipeReleaseStep(
                             pipe,
-                            ccmap::CcToSteps(val,
-                                             chompi::OrganEngine::kMaxEnvSteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kMuteCcBase)) >= 0)
                     {
@@ -127,63 +120,53 @@ class OrganMidi
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kLengthCcBase)) >= 0)
                     {
-                        engine_->SetPipeLengthOctave(pipe,
-                                                     ccmap::CcToLengthOctave(val));
+                        engine_->SetPipeLengthStep(pipe,
+                                                   ccmap::CcToPosition(val));
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kVolModCcBase)) >= 0)
                     {
                         engine_->SetPipeVolModStep(
                             pipe,
-                            ccmap::CcToSteps(val,
-                                             chompi::OrganEngine::kMaxModSteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kCharModCcBase)) >= 0)
                     {
                         engine_->SetPipeCharModStep(
                             pipe,
-                            ccmap::CcToSteps(val,
-                                             chompi::OrganEngine::kMaxModSteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if((pipe = PipeIndex(cc, ccmap::kLengthModCcBase))
                             >= 0)
                     {
                         engine_->SetPipeLengthModStep(
                             pipe,
-                            ccmap::CcToSteps(val,
-                                             chompi::OrganEngine::kMaxModSteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kVibratoDelayCc)
                     {
                         engine_->SetVibratoDelayStep(
-                            ccmap::CcToSteps(
-                                val,
-                                chompi::OrganEngine::kMaxVibratoDelaySteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kRotaryCc)
                     {
-                        engine_->SetRotaryStep(ccmap::CcToSteps(
-                            val, chompi::OrganEngine::kMaxSteps));
+                        engine_->SetRotaryStep(ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kDriveCc)
                     {
-                        engine_->SetDriveStep(ccmap::CcToSteps(
-                            val, chompi::OrganEngine::kMaxSteps));
+                        engine_->SetDriveStep(ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kDriveToneCc)
                     {
-                        engine_->SetDriveTonePercent(ccmap::CcToSteps(val, 100));
+                        engine_->SetDriveToneStep(ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kReverbMixCc)
                     {
-                        engine_->SetReverbMixStep(ccmap::CcToSteps(
-                            val, chompi::OrganEngine::kMaxSteps));
+                        engine_->SetReverbMixStep(ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kReverbDecayCc)
                     {
                         engine_->SetReverbDecayStep(
-                            ccmap::CcToSteps(
-                                val,
-                                chompi::OrganEngine::kMaxReverbDecaySteps));
+                            ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kPercussionCc)
                     {
@@ -191,21 +174,19 @@ class OrganMidi
                     }
                     else if(cc == ccmap::kDelayMixCc)
                     {
-                        engine_->SetDelayMixPercent(ccmap::CcToSteps(val, 100));
+                        engine_->SetDelayMixStep(ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kDelayTimeCc)
                     {
-                        engine_->SetDelayTimeMs(ccmap::CcToDelayTimeMs(val));
+                        engine_->SetDelayTimeStep(ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kDriveModCc)
                     {
-                        engine_->SetDriveModStep(ccmap::CcToSteps(
-                            val, chompi::OrganEngine::kMaxModSteps));
+                        engine_->SetDriveModStep(ccmap::CcToPosition(val));
                     }
                     else if(cc == ccmap::kDelayModCc)
                     {
-                        engine_->SetDelayModStep(ccmap::CcToSteps(
-                            val, chompi::OrganEngine::kMaxModSteps));
+                        engine_->SetDelayModStep(ccmap::CcToPosition(val));
                     }
                     break;
                 }
@@ -291,20 +272,17 @@ class OrganMidi
 
     void SendPipeCC(int pipe, int step)
     {
-        SendStepCC(chompi::MidiCcMap::kLevelCcBase + pipe, step,
-                   chompi::OrganEngine::kMaxSteps);
+        SendStepCC(chompi::MidiCcMap::kLevelCcBase + pipe, step);
     }
 
     void SendCharacterCC(int pipe, int step)
     {
-        SendStepCC(chompi::MidiCcMap::kCharacterCcBase + pipe, step,
-                   chompi::OrganEngine::kMaxCharacterSteps);
+        SendStepCC(chompi::MidiCcMap::kCharacterCcBase + pipe, step);
     }
 
     void SendVibratoCC(int step)
     {
-        SendStepCC(chompi::MidiCcMap::kVibratoCc, step,
-                   chompi::OrganEngine::kMaxVibratoDepthCents);
+        SendStepCC(chompi::MidiCcMap::kVibratoCc, step);
     }
 
   private:
@@ -317,10 +295,9 @@ class OrganMidi
                    : -1;
     }
 
-    void SendStepCC(int cc, int step, int max_steps)
+    void SendStepCC(int cc, int step)
     {
-        const uint8_t val = static_cast<uint8_t>(
-            (step * 127 + max_steps / 2) / max_steps);
+        const uint8_t val = chompi::MidiCcMap::PositionToCc(step);
         uint8_t buf[3] = {static_cast<uint8_t>(0xB0 | kChannel),
                           static_cast<uint8_t>(cc),
                           val};

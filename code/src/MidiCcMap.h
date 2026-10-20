@@ -13,44 +13,48 @@
  */
 #pragma once
 #include <cstdint>
+#include "ParameterSteps.h"
 
 namespace chompi
 {
 namespace MidiCcMap
 {
     /* --- original blocks --- */
-    constexpr uint8_t kVibratoCc       = 1;  /* modulation wheel: 0..50 cents */
+    constexpr uint8_t kVibratoCc       = 1;  /* modulation wheel: 0..32 positions */
     constexpr uint8_t kLevelCcBase     = 70; /* 70-73:  0..32 steps */
-    constexpr uint8_t kCharacterCcBase = 74; /* 74-77:  0..64 steps */
+    constexpr uint8_t kCharacterCcBase = 74; /* 74-77:  0..32 positions */
 
     /* --- per-pipe blocks, 4 CCs each (pipe = cc - base, 0..3) --- */
     constexpr uint8_t kAttackCcBase    = 78;  /* 78-81:   0..32 steps */
     constexpr uint8_t kReleaseCcBase   = 82;  /* 82-85:   0..32 steps */
     constexpr uint8_t kMuteCcBase      = 86;  /* 86-89:   0-63 off, 64-127 on */
-    constexpr uint8_t kLengthCcBase    = 90;  /* 90-93:   -2..+2 octaves, snapped */
+    constexpr uint8_t kLengthCcBase    = 90;  /* 90-93:   0..32 snapped positions */
     constexpr uint8_t kVolModCcBase    = 94;  /* 94-97:   0..32 steps */
     constexpr uint8_t kCharModCcBase   = 98;  /* 98-101:  0..32 steps */
     constexpr uint8_t kLengthModCcBase = 102; /* 102-105: 0..32 steps */
 
     /* --- globals --- */
-    constexpr uint8_t kVibratoDelayCc = 106; /* 0..50 steps of 100 ms */
+    constexpr uint8_t kVibratoDelayCc = 106; /* 0..32 positions across 0..5 s */
     constexpr uint8_t kRotaryCc       = 107; /* 0..32 steps */
     constexpr uint8_t kDriveCc        = 108; /* 0..32 steps */
-    constexpr uint8_t kDriveToneCc    = 109; /* 0..100 % */
+    constexpr uint8_t kDriveToneCc    = 109; /* 0..32 positions across 0..100% */
     constexpr uint8_t kReverbMixCc    = 110; /* 0..32 steps */
-    constexpr uint8_t kReverbDecayCc  = 111; /* 0..100 steps */
+    constexpr uint8_t kReverbDecayCc  = 111; /* 0..32 log-spaced positions */
     constexpr uint8_t kPercussionCc   = 112; /* 0-63 off, 64-127 on */
-    constexpr uint8_t kDelayMixCc     = 113; /* 0..100 % */
-    constexpr uint8_t kDelayTimeCc    = 114; /* 40..500 ms */
+    constexpr uint8_t kDelayMixCc     = 113; /* 0..32 combined positions */
+    constexpr uint8_t kDelayTimeCc    = 114; /* 0..32 positions across 40..500 ms */
+
+    inline int CcToPosition(uint8_t value)
+    {
+        return ParameterSteps::CcToPosition(value);
+    }
+
+    inline uint8_t PositionToCc(int position)
+    {
+        return ParameterSteps::PositionToCc(position);
+    }
     constexpr uint8_t kDriveModCc     = 115; /* 0..32 steps (global) */
     constexpr uint8_t kDelayModCc     = 116; /* 0..32 steps (global) */
-
-    /** 0-127 -> 0..max, rounded (the formula the original pipe CCs
-     *  used: CC 64 lands on the half step for the even ranges). */
-    inline int CcToSteps(uint8_t v, int max)
-    {
-        return (static_cast<int>(v) * max + 63) / 127;
-    }
 
     /** 0-63 = off, 64-127 = on (standard switch convention). */
     inline bool CcToToggle(uint8_t v) { return v >= 64; }
@@ -60,13 +64,7 @@ namespace MidiCcMap
      *  anchor (ties snap upward). */
     inline int CcToLengthOctave(uint8_t v)
     {
-        return (static_cast<int>(v) * 4 + 63) / 127 - 2;
-    }
-
-    /** 0-127 -> 40..500 ms, rounded (the stereo delay's time range). */
-    inline int CcToDelayTimeMs(uint8_t v)
-    {
-        return 40 + (static_cast<int>(v) * 460 + 63) / 127;
+        return ParameterSteps::PipeLengthOctave(CcToPosition(v));
     }
 
     /** Program Change number -> preset slot index 0..14 (documented as

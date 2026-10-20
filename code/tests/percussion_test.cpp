@@ -11,6 +11,7 @@
  */
 #include "Percussion.h"
 #include "OrganEngine.h"
+#include "OrganPreset.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -255,6 +256,52 @@ struct Rig
         RunMs(20.f);
     }
 };
+
+static void test_engine_parameter_positions()
+{
+    Rig r;
+    r.Init();
+    assert(r.engine.GetMasterStep() == 8);
+    assert(r.engine.GetFineTuneStep() == 16);
+    assert(r.engine.GetFineTuneCents() == 0);
+    assert(r.engine.GetDelayTimeStep() == 15);
+    assert(r.engine.GetDelayTimeMs() == 256);
+
+    r.engine.SetPipeCharacterStep(0, 32);
+    r.engine.SetPipeLengthStep(0, 19);
+    assert(r.engine.GetPipeCharacterStep(0) == 32);
+    assert(r.engine.GetPipeLengthStep(0) == 19);
+    assert(r.engine.GetPipeLengthOctave(0) == 0);
+    r.engine.SetPipeLengthStep(0, r.engine.GetPipeLengthStep(0) + 1);
+    assert(r.engine.GetPipeLengthStep(0) == 20);
+    assert(r.engine.GetPipeLengthOctave(0) == 1);
+
+    r.engine.SetVibratoDepthStep(16);
+    r.engine.SetVibratoDelayStep(32);
+    r.engine.SetDriveToneStep(17);
+    r.engine.SetReverbDecayStep(32);
+    r.engine.SetDelayMixStep(16);
+    r.engine.SetDelayTimeStep(32);
+
+    chompi::OrganPreset preset;
+    preset.SetDefaults();
+    chompi::CaptureFromEngine(preset, r.engine);
+    assert(preset.length_step[0] == 20);
+    assert(preset.character_step[0] == 32);
+    assert(preset.vibrato_depth_step == 16);
+    assert(preset.vibrato_delay_step == 32);
+    assert(preset.drive_tone_step == 17);
+    assert(preset.reverb_decay_step == 32);
+    assert(preset.delay_mix_step == 16);
+    assert(preset.delay_time_step == 32);
+
+    r.engine.SetPipeLengthStep(0, 4);
+    chompi::ApplyToEngine(preset, r.engine);
+    assert(r.engine.GetPipeLengthStep(0) == 20);
+    assert(r.engine.GetPipeLengthOctave(0) == 1);
+    assert(r.engine.GetDelayTimeStep() == 32);
+    assert(r.engine.GetDelayTimeMs() == 500);
+}
 
 /** Windowed DFT magnitude at an exact frequency. */
 static float MagAt(const std::vector<float> &x, float freq)
@@ -633,6 +680,7 @@ static void test_engine_normalization_and_off_equivalence()
 
 int main()
 {
+    test_engine_parameter_positions();
     test_init_settled();
     test_enable_ramp_endpoints(48000.f);
     test_enable_ramp_endpoints(32000.f);

@@ -44,6 +44,8 @@ class PresetStorage
         retries_         = 0;
         last_disk_check_ = 0;
         retry_at_        = 0;
+        for(int s = 0; s < kNumSlots; s++)
+            incompatible_[s] = false;
 
         /* same SDMMC/FatFS init as chompi-tape; with no card inserted
          * this configures the peripheral without touching a card and the
@@ -225,6 +227,17 @@ class PresetStorage
     /** A write/delete cycle is in flight. */
     bool Busy() const { return stage_ != kIdle; }
 
+    bool IsIncompatibleSlot(int slot) const
+    {
+        return slot >= 0 && slot < kNumSlots && incompatible_[slot];
+    }
+
+    void ClearIncompatibleSlot(int slot)
+    {
+        if(slot >= 0 && slot < kNumSlots)
+            incompatible_[slot] = false;
+    }
+
   private:
     enum Stage : uint8_t
     {
@@ -266,7 +279,12 @@ class PresetStorage
         read_buf_[br] = '\0';
         OrganPreset p;
         if(Parse(read_buf_, br, p))
+        {
             bank.LoadSlot(s, p);
+            incompatible_[s] = false;
+        }
+        else
+            incompatible_[s] = true;
     }
 
     /** Failed stage: retry a few times with a short backoff, then drop
@@ -316,6 +334,7 @@ class PresetStorage
 
     OrganPreset preset_snapshot_;
     bool        valid_snapshot_;
+    bool        incompatible_[kNumSlots];
     char        json_[kJsonSize];
     size_t      json_len_;
     char        read_buf_[kJsonSize]; /* boot/gap-fill read buffer (SRAM,

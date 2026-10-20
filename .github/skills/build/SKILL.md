@@ -29,6 +29,7 @@ Variants:
 - First build / toolchain sanity check: add `make check-toolchain` before the build (must print GCC 10.3.1).
 - Clean rebuild: `make clean` first.
 - CPU-meter build (user passes `cpu-meter`): append `PIPES_CPU_METER=1`.
+- If the user requests a build without full test coverage, run only the firmware build and required memory report; do not run the native test suite unless they explicitly ask for it.
 
 If `C:\msys64\usr\bin\bash.exe` does not exist, locate the MSYS2 install (check `C:\msys64`, or ask the user) and adjust.
 

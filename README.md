@@ -20,6 +20,11 @@ what their knob LEDs show, and Modulation Mode adds its own SHIFT key
 gestures; preset management and octave selection are Normal-Mode-only.
 Everything else behaves the same in both modes.
 
+Every active rotary parameter uses 32 accepted encoder ticks across 33
+positions (0 through 32), with no acceleration or wrap. MIDI addresses this
+same 0..32 grid. Pipe length retains all positions while snapping the sound
+to five octave settings, so some ticks advance without changing pitch.
+
 ### Pipe encoders - Normal Mode (physical knobs 1-4, left to right)
 
 Each pipe encoder has three independent pages; press the encoder's push
@@ -30,24 +35,28 @@ per-pipe, not global, and are preserved across mode changes):
   Boot default is step 16 (50%). The white-key bar shows the level with a
   green/orange/red position gradient.
 - **Page 2 - Character** (blue knob LED, brightness tracks the amount with
-  a floor so the page stays visible at 0): 64 steps of tonewheel-inspired
-  harmonic coloration. Step 0 is the exact clean sine; step 64 is clearly
+  a floor so the page stays visible at 0): 32 positions of tonewheel-inspired
+  harmonic coloration. Step 0 is the exact clean sine; step 32 is clearly
   aged but still organ-like. On the 8' pipe the added harmonics are
   progressively boosted below ~400 Hz (full at 150 Hz), so low notes gain
   extra grit and definition as Character rises - the same low-end
   reinforcement real organs get from quint ranks. The white-key bar is
   uniformly blue.
 - **Page 3 - pipe length** (yellow knob LED, brightness tracks the
-  |octave| with a floor so the page stays visible at the default): one
-  detent = one octave, up to two octaves each way from the pipe's
-  nominal footage, clamped, no wrap - e.g. the 8' pipe reaches 16' and
+  |octave| with a floor so the page stays visible at the default): 32
+  positions span two octaves each way from nominal, snapping to five
+  sounding octaves at positions 0, 8, 16, 24 and 32. Position groups
+  0-3, 4-11, 12-19, 20-27 and 28-32 select -2, -1, 0, +1 and +2
+  octaves respectively. Positions are retained per pipe, so ticks within
+  a group still count and SHIFT broadcasts the resulting position. The
+  pipe reaches 16' and
   32' turning left, 4' and 2' turning right. The white-key bar shows
   the offset as a 3-key yellow group: keys 1-3 = -2 octaves, 4-6 = -1,
   7-9 = the default length, 10-12 = +1, 13-15 = +2. Held notes move to
   the new pitch click-free, the 20 kHz foldback applies after the
   offset (like a real organ), and the percussion follows the 2 2/3'
-  pipe's length. Pipe lengths boot at the nominal footage, are stored
-  in the SD-card presets and have no MIDI CC.
+  pipe's length. Pipe lengths boot at nominal footage and are stored in
+  the SD-card presets; CC 90-93 address all 33 positions.
 
 The attack and release times are edited in Modulation Mode: select the
 attack or release destination there (see the Modulation Mode section)
@@ -61,7 +70,7 @@ different rates - e.g. let the 2' pipe swell up seconds after the 8'
 fundamental speaks. A voice stays allocated until every pipe's release
 has finished; voice stealing keeps the fixed 5 ms steal fade. Attack and
 release boot at step 0 (5 ms), are stored in the SD-card presets (see
-the Presets section) and have no MIDI CC.
+the Presets section) and use CC 78-85.
 
 Each pipe has its own Character amount, applied to that pipe across all
 six voices; adjusting one pipe never changes the others' amounts or
@@ -121,10 +130,9 @@ right):
   audibility.
 
 Black keys 6, 7, 9 and 10 select nothing. Volume modulation is
-selected at
-boot; the selection is remembered across mode changes until reboot and
-is not stored in the presets (the distortion-modulation amount itself
-IS stored, as the global "drive_mod" preset field).
+selected at boot; the selection is remembered across mode changes until
+reboot and is not stored in the presets. The per-pipe modulation amounts
+use CC 94-105, with global drive and delay amounts on CC 115-116.
 
 The six destination keys are always lit in Modulation Mode - the
 selected key at 100% of its destination color, the other five at
@@ -144,9 +152,10 @@ With SHIFT held in Modulation Mode the white keys still play notes
 (preset load/save and octave changes are Normal-Mode-only); without
 SHIFT all 25 keys play as usual.
 
-The modulation works in each parameter's normalized domain: volume
+the modulation works in each parameter's normalized domain: volume
 x = level/32 (the squared gain curve is applied to the modulated
-value), Character a = step/64 (before its smoothstep easing), drive
+value), Character a = position/32 (mapped to the shaper's 0..64 DSP
+range before its smoothstep easing), drive
 d = step/32 (shared by all pipes). The
 amount scales a window around the user value: at 100% the window is
 +/-20% (40% total); the window slides - never clips - to stay inside
@@ -168,8 +177,9 @@ them; the modulation amounts only scale how much of the ongoing drift
 reaches the sound.
 
 All modulation amounts boot at 0 (PIPES sounds exactly like Normal
-Mode until amounts are raised) and are stored in the SD-card presets;
-there is no MIDI CC for them. The Normal Mode bars and MIDI CCs keep
+Mode until amounts are raised) and are stored in the SD-card presets.
+Per-pipe amounts use CC 94-105; global drive and delay amounts use CC
+115-116. The Normal Mode bars and MIDI CCs keep
 showing the un-modulated center values.
 
 ### Transport wheel (ENC_5)
@@ -182,17 +192,17 @@ effect and shows its white-key value bar for 500 ms.
 
 - Rotary-speaker amount: 32 steps; 0 is an exact bypass and boots at
   0. Purple bar.
-- Vibrato depth: 0-50 cents peak deviation in one-cent steps from one
+- Vibrato depth: 32 positions across 0-50 cents peak deviation from one
   shared, free-running 5 Hz LFO across all voices (depth 50 = one
   semitone peak-to-peak); 0 is an exact bypass and boots at 0. Pink bar.
   The depth is stored in the SD-card presets.
 - Vibrato note-on delay: with vibrato selected on the wheel, SHIFT +
-  turn sets a 0-5 s delay in 100 ms steps (clamped, no wrap). When a
+  turn sets 32 positions across 0-5 s (clamped, no wrap). When a
   note is pressed from an all-notes-released state the vibrato stays
   off for the delay time, then fades in over a fixed 250 ms ramp up to
   the set depth; notes pressed while other notes are held do not
   restart it. Pink bar. 0 (boot and init patch) starts the vibrato
-  with the note. The delay is stored in the SD-card presets.
+  with the note. Both controls are stored in presets and addressed by CC 1 / 106.
 
 ### Volume encoder (ENC_6)
 
@@ -204,8 +214,8 @@ Turning or pressing the encoder shows the current page's white-key value
 bar for 500 ms.
 
 Page 2's distortion is a fuzz with a tone control. SHIFT + turn on
-page 2 changes the tone by 1 percentage point per click, clamped to
-0-100% (no wrap); the amount is not changed. The tone sweeps the
+page 2 changes the tone through 32 positions across 0-100% (no wrap);
+the amount is not changed. The tone sweeps the
 cutoff of the fuzz's post low-pass - two identical cascaded one-pole
 stages with an approximately 12 dB/octave stopband roll-off -
 logarithmically from 500 Hz (0%, dark) to 10 kHz (100%, boot default).
@@ -218,8 +228,8 @@ bar across the 15 white keys (none lit at 0%, eight at 50%, all
 fifteen at 100%); the tone bar takes priority over any pipe value bar
 while it is active, and in Modulation Mode the destination-key LEDs
 stay visible. Holding SHIFT on page 2 in Normal Mode shows the preset
-slot overview like on any other page. The tone boots to 100% and is
-stored in the SD-card presets; it has no MIDI CC.
+slot overview like on any other page. The tone boots at position 32 and
+is stored in presets; CC 109 addresses its 33 positions.
 
 To keep the perceived loudness even at any distortion amount, an
 automatic output leveling trims the fuzzed signal after the rotary and
@@ -237,7 +247,8 @@ exactly unity at settled bypass; it introduces no user control, and the
 main-volume value and display are unaffected.
 
 Page 3 adjusts the stereo delay with one combined mix/feedback
-control: 1% per click, clamped to 0-100%. The lower half of the bar
+control: 32 positions across the existing 0-100% curve, with position
+16 at the 50% pivot. The lower half of the bar
 (0-50%) sweeps the dry/wet mix from 0% to 50%: 0% is exact dry (a
 linear complementary crossfade with a ~10 ms click-free ramp). Above
 50% the mix locks at 50% and the delay feedback rises from 35% to
@@ -249,8 +260,8 @@ and below the 50% point goes back to controlling the mix. The
 white-key bar is
 uniformly yellow: no keys at 0%, half (8 keys) at 50%, all 15 at 100%.
 
-SHIFT + turn on page 3 adjusts the delay time: 5 ms per click, clamped
-to 40-500 ms (boot default 250 ms), shown on the same yellow white-key
+SHIFT + turn on page 3 adjusts the delay time across 32 positions from
+40-500 ms (boot default position 15, 256 ms), shown on the same yellow white-key
 bar while turning (40 ms = no keys, 500 ms = all 15). Time changes slew
 the read position smoothly, giving the pitch-gliding transitions of an
 analog BBD clock change; the echo history is never cleared.
@@ -270,9 +281,8 @@ The buffers keep running at 0% mix and across page/preset changes, so
 tails ring out naturally and old echoes survive a mix reopening; loading
 a preset ramps the mix/time without clearing them.
 
-The delay mix/feedback value and time boot at 0% / 250 ms and are
-stored in the SD-card presets (the combined value in the `delay_mix`
-field); they have no MIDI CC.
+The delay mix/feedback value and time boot at 0% / 256 ms and are
+stored in the SD-card presets; CC 113-114 address the shared 0..32 grid.
 
 Page 4 adjusts the reverb mix in 32 steps (one per click, the same
 granularity as the overdrive amount): step 0 is exact dry and step 32
@@ -280,7 +290,7 @@ is wet only (a linear complementary crossfade with a ~10 ms click-free
 ramp). The white-key bar is uniformly blue: no keys at 0, half (8 keys)
 at step 16, all 15 at step 32.
 
-SHIFT + turn on page 4 adjusts the plate decay: 100 log-spaced steps
+SHIFT + turn on page 4 adjusts the plate decay: 32 log-spaced positions
 from 0.2 s (boot default) to 20 s, shown on the same blue white-key bar
 while turning. The wet level and tank headroom are normalized across the
 range, so the decay changes the tail duration, not the loudness.
@@ -300,9 +310,9 @@ turning the master volume to zero silences dry and wet alike (the
 reverb sits before the master gain).
 
 The mix and decay boot at 0% / 0.2 s and are stored in the SD-card
-presets; they have no MIDI CC.
+presets; CC 110-111 address their 0..32 positions.
 
-SHIFT + turn = fine tune (+/-50 cents) on page 1 only (page 2 adjusts
+SHIFT + turn = fine tune (+/-50 cents across 32 positions, center 16) on page 1 only (page 2 adjusts
 the distortion tone, page 3 adjusts the delay time, page 4 adjusts the
 reverb decay). The fine-tune bar centers
 on white key 8: exactly centered is that key alone in green, and any
@@ -351,7 +361,7 @@ next note after a full release gets the ping. Toggling off fades the
 burst out in ~5 ms.
 
 Percussion boots off, is stored in the SD-card presets (older presets
-without the field load as off) and has no MIDI CC. While it is enabled
+without the field load as off) and uses MIDI CC 112. While it is enabled
 the dry mix is normalized for the extra voice content (about 1 dB of
 attenuation, ramped click-free with the toggle); settled-off renders
 exactly like the percussion-less firmware.
@@ -367,6 +377,17 @@ freezes or glitches the audio. A save is written as a `.tmp` file that
 is then renamed over the old file, so a power loss mid-save can corrupt
 at most the slot being written. PIPES always boots on its factory
 defaults; a preset is only applied when you load it.
+
+Preset schema version 2 stores rotary controls as 0..32 positions,
+including retained pipe-length positions. Version-1 files (including files
+without a version field) are converted in RAM to the nearest position and
+are not rewritten or marked dirty by loading. A future unsupported version
+is left unloaded and its slot blinks red in preset selection. An explicit
+save or copy writes version 2. Back up the `PIPES/` preset folder before
+upgrading: older firmware cannot safely read version-2 files, so downgrade
+requires restoring the version-1 backup. Existing automation retains the
+same endpoints and approximate proportions, but values quantize to the new
+33-position grid.
 
 Gestures (SHIFT = the CHOMPI key). Load, save, copy, delete and their
 confirmations are Normal-Mode-only: entering Modulation Mode cancels
@@ -392,12 +413,12 @@ in the background without taking over the Modulation-mode LEDs.
   key early cancels. At 2.5 s the init sound is applied live (held and
   latched notes keep sounding) and the CHOMPI key LED blinks white for
   ~1 s. Init needs no SD card. Init values: pipe levels 16 (50%),
-  Character 0 (clean sine), pipe lengths 0 (nominal footage), attack
+  Character 0 (clean sine), pipe length position 16 (nominal footage), attack
   and release 0 (5 ms), mutes off,
   volume/Character modulation 0, vibrato depth and note-on delay 0,
   rotary and drive 0,
-  distortion tone 100%, reverb mix 0, reverb decay 0 (0.2 s),
-  percussion off, delay mix 0% and delay time 250 ms - the
+  distortion tone position 32 (100%), reverb mix 0, reverb decay 0 (0.2 s),
+  percussion off, delay mix 0% and delay time position 15 (256 ms) - the
   same sound as power-on. Not touched: master volume, fine tune,
   octave, latch state, page selections and the wheel mode. After init
   no slot is "current" (no white slot in the SHIFT slot view).
@@ -577,8 +598,7 @@ install it first with `make program-boot` from `code/src` (this flashes
 
 ## Tests
 
-Native DSP tests for the Character shaper and the plate reverb live in
-`code/tests/`:
+Native mapping, preset, engine and DSP tests live in `code/tests/`:
 
 ```sh
 make -C code/tests test
@@ -605,9 +625,10 @@ leveling (dry-matched loudness with +1.5 dB headroom, -30 dB floor). The drift-m
 (including the amount-0 exact-center guarantee), the 2.5-10 s random
 half durations and 5-20 s cycles, per-block continuity, modulator
 independence across the 8 seeds, and fixed-seed determinism at 48 kHz
-and 32 kHz. The preset tests cover the versioned JSON round-trip of
-every field, defaults for missing keys, clamping of out-of-range and
-garbage values, version tolerance, the 15-slot bank's save/copy/erase
+and 32 kHz. Parameter-step tests exhaust MIDI inputs and 33-position
+round trips. Preset tests cover v1 migration and v2 JSON round-trips,
+defaults for missing keys, clamping of out-of-range and garbage values,
+unsupported-version rejection, the 15-slot bank's save/copy/erase
 and dirty tracking, engine capture/apply against a fake engine, and
 the init-patch values. The Modulation-mode UI tests cover the physical
 black-key destination mapping, the boot default and remembered

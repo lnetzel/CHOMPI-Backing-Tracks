@@ -42,27 +42,26 @@ static void test_cc_map_layout()
 
 static void test_steps_endpoints()
 {
-    /* 0 and 127 hit the exact range ends for every step range used */
-    const int maxes[] = {32, 50, 64, 100};
-    for(size_t m = 0; m < sizeof(maxes) / sizeof(maxes[0]); m++)
-    {
-        assert(CcToSteps(0, maxes[m]) == 0);
-        assert(CcToSteps(127, maxes[m]) == maxes[m]);
-    }
+    assert(CcToPosition(0) == 0);
+    assert(CcToPosition(64) == 16);
+    assert(CcToPosition(127) == 32);
 }
 
 static void test_steps_rounding()
 {
-    /* CC 64 lands on the half step for the even ranges (CC 64 = the
-     * boot defaults: level step 16, Character step 32) */
-    assert(CcToSteps(64, 32) == 16);
-    assert(CcToSteps(64, 64) == 32);
-    assert(CcToSteps(64, 50) == 25);
-    /* no value ever leaves the range */
+    bool seen[33] = {};
+    int previous = -1;
     for(int v = 0; v < 128; v++)
     {
-        assert(CcToSteps(v, 32) >= 0 && CcToSteps(v, 32) <= 32);
-        assert(CcToSteps(v, 100) >= 0 && CcToSteps(v, 100) <= 100);
+        const int position = CcToPosition(static_cast<uint8_t>(v));
+        assert(position >= previous && position >= 0 && position <= 32);
+        seen[position] = true;
+        previous = position;
+    }
+    for(int position = 0; position <= 32; position++)
+    {
+        assert(seen[position]);
+        assert(CcToPosition(PositionToCc(position)) == position);
     }
 }
 
@@ -82,28 +81,30 @@ static void test_length_anchors()
     assert(CcToLengthOctave(64) == 0);
     assert(CcToLengthOctave(96) == 1);
     assert(CcToLengthOctave(127) == 2);
-    /* in-between values snap to the nearest anchor (ties snap up) */
+    /* MIDI first selects a shared position, then snaps to the octave. */
     assert(CcToLengthOctave(33) == -1);
     assert(CcToLengthOctave(95) == 1);
-    assert(CcToLengthOctave(79) == 0);
+    assert(CcToLengthOctave(79) == 1);
     assert(CcToLengthOctave(80) == 1);
     /* every value lands inside -2..+2 */
     for(int v = 0; v < 128; v++)
     {
         const int oct = CcToLengthOctave(v);
         assert(oct >= -2 && oct <= 2);
+        const int position = CcToPosition(static_cast<uint8_t>(v));
+        assert(oct == chompi::ParameterSteps::PipeLengthOctave(position));
     }
 }
 
 static void test_delay_time()
 {
-    assert(CcToDelayTimeMs(0) == 40);
-    assert(CcToDelayTimeMs(127) == 500);
-    /* monotonic and in range over the whole span */
-    int prev = CcToDelayTimeMs(0);
+    assert(chompi::ParameterSteps::DelayTimeMs(CcToPosition(0)) == 40);
+    assert(chompi::ParameterSteps::DelayTimeMs(CcToPosition(127)) == 500);
+    int prev = -1;
     for(int v = 1; v < 128; v++)
     {
-        const int ms = CcToDelayTimeMs(v);
+        const int ms = chompi::ParameterSteps::DelayTimeMs(
+            CcToPosition(static_cast<uint8_t>(v)));
         assert(ms >= prev);
         assert(ms >= 40 && ms <= 500);
         prev = ms;

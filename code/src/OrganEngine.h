@@ -4,9 +4,10 @@
  *  Implements FR-1/FR-6 and DSP-1..DSP-3 of chompi-pipes- specification.md:
  *  - Pipe ratios 1x / 2x / 2^(19/12)x / 4x with 20 kHz octave foldback,
  *    plus a per-pipe +/-2-octave pipe-length offset (encoder page 3)
- *  - Per-pipe Character: tonewheel-inspired harmonic coloration, 64
- *    steps, one independent amount per pipe shared across all voices
- *    (TonewheelCharacter.h). Step 0 is the exact clean sine; step 64 is
+ *  - Per-pipe Character: tonewheel-inspired harmonic coloration, 32
+ *    control positions mapped to the shaper's 0..64 DSP range, one
+ *    independent amount per pipe shared across all voices
+ *    (TonewheelCharacter.h). Position 0 is the exact clean sine; 32 is
  *    clearly aged but still organ-like. One table-lookup sine
  *    oscillator per pipe (SineLut.h: 2048-entry interpolated table,
  *    ~1.2e-6 max error - audibly identical to the libm sinf oscillator
@@ -58,7 +59,7 @@
  *    diffuse field. Mix is adjustable in 32 steps through a linear
  *    complementary dry/wet crossfade with a ~10 ms ramp: step 0 is
  *    bit-exact dry, step 32 is wet only. Decay is
- *    adjustable 0.2-20 s in 100 log-spaced steps (boots at 0.2 s). The
+ *    adjustable 0.2-20 s in 32 log-spaced positions (boots at 0.2 s). The
  *    tank runs continuously (live tails, no stale state); the 128 KiB
  *    float delay buffer is caller-owned SDRAM passed to Init().
  *  - Stereo BBD-inspired delay (StereoBbdDelay.h) after the rotary and
@@ -69,10 +70,11 @@
  *    it stereo (not ping-pong). Linear complementary mix crossfade with
  *    a ~10 ms ramp: settled 0% is bit-exact dry, 100% is wet only. The
  *    buffers keep running at dry mix and across preset changes, so
- *    echoes never drop. Boots dry at 250 ms; saved in the SD-card
- *    presets; no MIDI CC.
+ *    echoes never drop. Boots dry at position 15 (256 ms); saved in the
+ *    SD-card presets and addressed by CC 113-114.
  *  - Vibrato: global pitch modulation from one shared, free-running
- *    5 Hz LFO (Vibrato.h). Depth 0-50 = +/-0-50 cents peak, applied to
+ *    5 Hz LFO (Vibrato.h). Depth uses 32 positions across 0-50 cents
+ *    peak, applied to
  *    every voice as a per-sample frequency multiplier on the stored
  *    base frequencies (no oscillator phase resets, no drift). Depth 0
  *    is an exact bypass. Separate from the rotary speaker's Doppler.
@@ -88,7 +90,8 @@
  *    block in Prepare(); the existing
  *    ~1 ms gain slew and ~10 ms Character ramp smooth the block steps.
  *    Amount 0 is bit-exact the unmodulated center; mute still forces
- *    silence. Saved in the SD-card presets; no MIDI CC.
+ *    silence. Saved in the SD-card presets; per-pipe amounts use CC
+ *    94-105 and global drive/delay amounts use CC 115-116.
  *  - Hammond-style percussion (Percussion.h): toggled by the Play/Pause
  *    key, one SHARED decaying burst of the raw 2 2/3' pipe sine (tapped
  *    before Character, pipe gain and the pipe envelopes) is added to
@@ -122,6 +125,7 @@
 #include "EnvelopeMap.h"
 #include "DriftModulator.h"
 #include "Percussion.h"
+#include "ParameterSteps.h"
 
 namespace chompi
 {
@@ -162,18 +166,19 @@ class OrganEngine
     static constexpr int   kDefaultStep          = 16; /* 50% volume */
     static constexpr int   kDefaultCharacterStep = 0;  /* clean sine, shaping
                                                         * bypassed */
+    static constexpr int   kDefaultPipeLengthStep = 16;
+    static constexpr int   kDefaultMasterStep     = 8; /* gain 0.25 */
     static constexpr int   kDefaultDriveStep     = 0;  /* overdrive off */
     static constexpr int   kDefaultRotaryStep    = 0;  /* rotary off (exact
                                                         * bypass) */
     static constexpr int   kDefaultReverbMixStep    = 0; /* reverb dry */
     static constexpr int   kDefaultReverbDecayStep  = 0; /* 0.2 s decay */
-    static constexpr int   kMaxReverbDecaySteps     = 100;
+    static constexpr int   kMaxReverbDecaySteps     = 32;
     static constexpr float kMinReverbDecaySeconds   = .2f;
     static constexpr float kMaxReverbDecaySeconds   = 20.f;
     static constexpr int   kMaxVibratoDepthCents    = Vibrato::kMaxDepthCents;
     static constexpr int   kDefaultVibratoDepth     = 0; /* vibrato off */
-    static constexpr int   kMaxVibratoDelaySteps    = 50; /* 0..5 s */
-    static constexpr int   kVibratoDelayStepMs      = 100;
+    static constexpr int   kMaxVibratoDelaySteps    = 32; /* 0..5 s */
     static constexpr int   kDefaultVibratoDelayStep = 0; /* delay off */
     static constexpr int   kMaxEnvSteps     = EnvelopeMap::kMaxSteps;
     static constexpr int   kDefaultEnvStep  = 0; /* 5 ms: the original timing */
@@ -185,7 +190,8 @@ class OrganEngine
     static constexpr int   kDefaultPipeLengthOctave = 0; /* nominal
                                                         * footage */
     static constexpr int   kDefaultDelayMixPercent = 0; /* delay dry */
-    static constexpr int   kDefaultDelayTimeMs     = 250;
+    static constexpr int   kDefaultDelayTimeStep   = 15;
+    static constexpr int   kDefaultDelayTimeMs     = 256;
     static constexpr int   kMinDelayTimeMs         = 40;
     static constexpr int   kMaxDelayTimeMs         = 500;
     /** Delay page-3 combined control: 0..50 sweeps the dry/wet mix
@@ -210,7 +216,7 @@ class OrganEngine
         sample_rate_ = sample_rate;
         steal_inc_   = 1.f / (0.005f * sample_rate); /* 5 ms steal fade */
         age_counter_ = 0;
-        fine_cents_  = 0;
+        fine_step_   = kMaxSteps / 2;
         fine_mult_   = 1.f;
         freqs_dirty_ = false;
         /* MIDI note -> Hz, equal-tempered A440: filled once here with
@@ -222,7 +228,11 @@ class OrganEngine
                           * powf(2.f, (static_cast<float>(n) - 69.f) / 12.f);
         character_.Init(sample_rate);
         for(int p = 0; p < kNumPipes; p++)
-            character_.SetStep(p, kDefaultCharacterStep);
+        {
+            character_step_[p] = kDefaultCharacterStep;
+            character_.SetStep(
+                p, ParameterSteps::CharacterDspStep(kDefaultCharacterStep));
+        }
 
         for(int v = 0; v < kNumVoices; v++)
         {
@@ -250,7 +260,7 @@ class OrganEngine
             pipe_gain_[p] = pipe_gain_target_[p] = StepToGain(kDefaultStep);
             pipe_attack_step_[p]  = kDefaultEnvStep;
             pipe_release_step_[p] = kDefaultEnvStep;
-            pipe_length_oct_[p]   = kDefaultPipeLengthOctave;
+            pipe_length_step_[p]  = kDefaultPipeLengthStep;
             attack_inc_[p]  = EnvelopeMap::StepToInc(kDefaultEnvStep,
                                                      sample_rate);
             release_inc_[p] = attack_inc_[p];
@@ -289,13 +299,16 @@ class OrganEngine
         drive_mod_.Init(sample_rate, 0xC3D2E1F0u);
         length_mod_active_ = false;
 
-        master_gain_ = master_gain_target_ = kDefaultMasterGain;
+        master_step_ = kDefaultMasterStep;
+        master_gain_ = master_gain_target_
+            = ParameterSteps::Normalized(kDefaultMasterStep);
 
         drive_step_ = kDefaultDriveStep;
         drive_ = drive_target_
             = static_cast<float>(kDefaultDriveStep) * (1.f / kMaxSteps);
         drive_mod_target_ = drive_target_;
         distortion_.Init(sample_rate); /* fuzz; tone boots at 100% */
+        SetDriveToneStep(kMaxSteps);
 
         rotary_.Init(sample_rate);
         SetRotaryStep(kDefaultRotaryStep);
@@ -306,9 +319,10 @@ class OrganEngine
                                                         * already set 0.2 s */
 
         delay_.Init(sample_rate, delay_left, delay_right);
-        delay_mix_percent_ = kDefaultDelayMixPercent; /* boots exact dry */
-        delay_time_ms_     = kDefaultDelayTimeMs;     /* delay_.Init()
-                                                       * already set 250 ms */
+        delay_mix_step_ = ParameterSteps::LegacyPosition(
+            kDefaultDelayMixPercent, 0, 100); /* boots exact dry */
+        delay_time_step_ = kDefaultDelayTimeStep; /* 256 ms on the shared grid */
+        delay_.SetDelayMs(static_cast<float>(GetDelayTimeMs()));
         /* the single global delay drift runs at the base rate with its
          * own seed; amount boots 0 = exact unmodulated delay */
         delay_mod_step_   = 0;
@@ -316,7 +330,10 @@ class OrganEngine
         delay_mod_.Init(sample_rate, 0xD4A137B2u);
 
         vibrato_.Init(sample_rate);
-        vibrato_.SetDepth(kDefaultVibratoDepth); /* boots exactly dry */
+        vibrato_depth_step_ = ParameterSteps::LegacyPosition(
+            kDefaultVibratoDepth, 0, kMaxVibratoDepthCents);
+        vibrato_.SetDepth(ParameterSteps::VibratoDepthCents(
+            vibrato_depth_step_)); /* boots exactly dry */
         vibrato_delay_step_ = kDefaultVibratoDelayStep;
         vibrato_.SetDelayMs(0.f); /* delay envelope off */
 
@@ -366,25 +383,27 @@ class OrganEngine
         SetPipeMuted(pipe, !pipe_muted_[pipe]);
     }
 
-    /** Apply one encoder click (or MIDI CC step) to a pipe's Character
- *      amount. Step 0 = exact clean sine, 64 = fully aged (tonewheel-
- *      inspired harmonic color, not square). Ramped ~10 ms, click-free. */
+    /** Set a pipe's Character position (0..32). The DSP shaper uses
+     *  twice this position internally; ramped ~10 ms, click-free. */
     void SetPipeCharacterStep(int pipe, int step)
     {
-        character_.SetStep(pipe, step);
+        if(pipe < 0 || pipe >= kNumPipes)
+            return;
+        step = ParameterSteps::Clamp(step);
+        character_step_[pipe] = static_cast<uint8_t>(step);
+        character_.SetStep(pipe, ParameterSteps::CharacterDspStep(step));
     }
 
     int GetPipeCharacterStep(int pipe) const
     {
-        return character_.GetStep(pipe);
+        return (pipe < 0 || pipe >= kNumPipes) ? 0 : character_step_[pipe];
     }
 
     /** Modulation Mode: set a pipe's volume-modulation amount
  *      (0..kMaxModSteps, clamped). 100% swings the level inside a
  *      +/-20% window around its center; 0 is the exact unmodulated
  *      center. The modulator keeps free-running; changing the amount
- *      never restarts it. Boots 0; saved in the SD-card presets; no
- *      MIDI CC. */
+ *      never restarts it. Boots 0; saved in presets; MIDI CCs 94-97. */
     void SetPipeVolModStep(int pipe, int step)
     {
         if(pipe < 0 || pipe >= kNumPipes)
@@ -401,8 +420,7 @@ class OrganEngine
     /** Modulation Mode: set a pipe's Character-modulation amount
  *      (0..kMaxModSteps, clamped). Same window semantics as the volume
  *      modulation, applied to the Character center before the
- *      smoothstep easing. Boots 0; saved in the SD-card presets; no
- *      MIDI CC. */
+ *      smoothstep easing. Boots 0; saved in presets; MIDI CCs 98-101. */
     void SetPipeCharModStep(int pipe, int step)
     {
         if(pipe < 0 || pipe >= kNumPipes)
@@ -421,8 +439,8 @@ class OrganEngine
  *      symmetric +/-kLengthModMaxCents window around its set length
  *      (linear in the step); 0 is the exact unmodulated pitch
  *      (multiplier exactly 1). The modulator keeps free-running;
- *      changing the amount never restarts it. Boots 0; saved in the
- *      SD-card presets; no MIDI CC. */
+ *      changing the amount never restarts it. Boots 0; saved in presets;
+ *      MIDI CCs 102-105. */
     void SetPipeLengthModStep(int pipe, int step)
     {
         if(pipe < 0 || pipe >= kNumPipes)
@@ -438,8 +456,8 @@ class OrganEngine
 
     /** Apply one encoder click to a pipe's attack time (0..kMaxEnvSteps,
  *      log-spaced 5 ms..10 s, EnvelopeMap.h). Step 0 is the original
- *      fixed 5 ms gate - boot default, no behavior change. The new rate
- *      applies to currently sounding voices on the next sample. */
+ *      fixed 5 ms gate - boot default, no behavior change. CCs 78-85
+ *      address attack/release; changes apply to sounding voices next sample. */
     void SetPipeAttackStep(int pipe, int step)
     {
         if(pipe < 0 || pipe >= kNumPipes)
@@ -471,31 +489,42 @@ class OrganEngine
         return pipe_release_step_[pipe];
     }
 
-    /** Apply one encoder click to a pipe's length: an octave offset of
- *      -2..+2 from the pipe's nominal footage (8', 4', 2 2/3', 2'),
- *      clamped, no wrap - one detent = one octave. The new ratio folds
+    /** Set a pipe's retained length position (0..32), snapped to an
+     *  octave offset of -2..+2 from nominal footage. The new ratio folds
  *      into the stored base frequencies via freqs_dirty_ without an
  *      oscillator phase reset, so sounding notes move to the new pitch
  *      click-free (same mechanism as fine tune); the 20 kHz foldback
  *      applies after the offset, like a real organ. The percussion taps
  *      the 2 2/3' pipe's raw oscillator, so it follows that pipe's
- *      length. Boots 0; saved in the SD-card presets; no MIDI CC. */
-    void SetPipeLengthOctave(int pipe, int oct)
+ *      length. Boots at position 16; saved in presets and addressed by
+ *      its per-pipe MIDI CC. */
+    void SetPipeLengthStep(int pipe, int step)
     {
         if(pipe < 0 || pipe >= kNumPipes)
             return;
+        pipe_length_step_[pipe] = static_cast<uint8_t>(
+            ParameterSteps::Clamp(step));
+        freqs_dirty_           = true;
+    }
+
+    void SetPipeLengthOctave(int pipe, int oct)
+    {
         oct = oct < -kMaxPipeLengthOctave
                   ? -kMaxPipeLengthOctave
-                  : (oct > kMaxPipeLengthOctave ? kMaxPipeLengthOctave
-                                                : oct);
-        pipe_length_oct_[pipe] = static_cast<int8_t>(oct);
-        freqs_dirty_           = true;
+                  : (oct > kMaxPipeLengthOctave ? kMaxPipeLengthOctave : oct);
+        SetPipeLengthStep(pipe, (oct + 2) * 8);
+    }
+
+    int GetPipeLengthStep(int pipe) const
+    {
+        return (pipe < 0 || pipe >= kNumPipes) ? 0 : pipe_length_step_[pipe];
     }
 
     int GetPipeLengthOctave(int pipe) const
     {
-        return (pipe < 0 || pipe >= kNumPipes) ? 0
-                                               : pipe_length_oct_[pipe];
+        return (pipe < 0 || pipe >= kNumPipes)
+               ? 0
+               : ParameterSteps::PipeLengthOctave(pipe_length_step_[pipe]);
     }
 
     /** Apply one encoder click to the overdrive amount (0..kMaxSteps).
@@ -534,10 +563,22 @@ class OrganEngine
  *      ~10 ms, click-free. Saved in the SD-card presets. */
     void SetDriveTonePercent(int percent)
     {
-        distortion_.SetTonePercent(percent);
+        SetDriveToneStep(ParameterSteps::LegacyPosition(percent, 0, 100));
     }
 
-    int GetDriveTonePercent() const { return distortion_.GetTonePercent(); }
+    void SetDriveToneStep(int step)
+    {
+        drive_tone_step_ = static_cast<uint8_t>(ParameterSteps::Clamp(step));
+        distortion_.SetTonePercent(
+            ParameterSteps::DriveTonePercent(drive_tone_step_));
+    }
+
+    int GetDriveToneStep() const { return drive_tone_step_; }
+
+    int GetDriveTonePercent() const
+    {
+        return ParameterSteps::DriveTonePercent(drive_tone_step_);
+    }
 
     /** Apply one encoder click to the rotary-speaker amount (0..kMaxSteps).
  *      Step 0 is an exact bypass; higher steps deepen the modulation and
@@ -551,17 +592,20 @@ class OrganEngine
 
     int GetRotaryStep() const { return rotary_step_; }
 
-    /** Apply one encoder click to the vibrato depth (0..50 cents peak,
- *      one-cent steps, clamped). The shared 5 Hz LFO keeps running
+     /** Set vibrato depth position (0..32) across 0..50 cents peak. The
+ *      shared 5 Hz LFO keeps running
  *      regardless; depth 0 is an exact bypass. On reaching 0 the
  *      sounding voices are snapped back to their exact base frequencies
  *      once, so the bypass is bit-exact rather than "1.0 within float
  *      rounding". Boots at 0; saved in the SD-card presets. */
-    void SetVibratoDepth(int depth)
+    void SetVibratoDepthStep(int step)
     {
-        const bool was_on = vibrato_.GetDepth() > 0;
-        vibrato_.SetDepth(depth);
-        if(was_on && vibrato_.GetDepth() == 0)
+        step = ParameterSteps::Clamp(step);
+        const bool was_on = vibrato_depth_step_ > 0;
+        vibrato_depth_step_ = static_cast<uint8_t>(step);
+        vibrato_.SetDepth(ParameterSteps::VibratoDepthCents(
+            vibrato_depth_step_));
+        if(was_on && vibrato_depth_step_ == 0)
         {
             for(int v = 0; v < kNumVoices; v++)
             {
@@ -573,23 +617,30 @@ class OrganEngine
         }
     }
 
-    int GetVibratoDepth() const { return vibrato_.GetDepth(); }
+    int GetVibratoDepthStep() const { return vibrato_depth_step_; }
 
-    /** Apply one encoder click to the vibrato note-on delay (0..50
- *      steps of 100 ms = 0..5 s, clamped, no wrap). Step 0 (boot, init
+    void SetVibratoDepth(int cents)
+    {
+        SetVibratoDepthStep(ParameterSteps::LegacyPosition(
+            cents, 0, kMaxVibratoDepthCents));
+    }
+
+    int GetVibratoDepth() const
+    {
+        return ParameterSteps::VibratoDepthCents(vibrato_depth_step_);
+    }
+
+     /** Set vibrato note-on delay position (0..32 across 0..5 s,
+ *      clamped, no wrap). Step 0 (boot, init
  *      patch) disables the envelope bit-exactly; any set step holds the
  *      vibrato at exact dry after a note-on from an all-notes-released
  *      state, then fades in over a fixed 250 ms ramp (Vibrato.h).
- *      Saved in the SD-card presets; no MIDI CC. */
+ *      Saved in presets and addressed by MIDI CC 106. */
     void SetVibratoDelayStep(int step)
     {
-        step = step < 0 ? 0
-                        : (step > kMaxVibratoDelaySteps
-                               ? kMaxVibratoDelaySteps
-                               : step);
+        step = ParameterSteps::Clamp(step);
         vibrato_delay_step_ = static_cast<uint8_t>(step);
-        vibrato_.SetDelayMs(static_cast<float>(step
-                                               * kVibratoDelayStepMs));
+        vibrato_.SetDelayMs(ParameterSteps::VibratoDelayMs(step));
     }
 
     int GetVibratoDelayStep() const { return vibrato_delay_step_; }
@@ -607,28 +658,21 @@ class OrganEngine
 
     int GetReverbMixStep() const { return reverb_mix_step_; }
 
-    /** Apply one encoder click to the plate-reverb decay (0..100 steps,
- *      clamped), mapped exponentially from 0.2 s (step 0, boot default)
- *      to 20 s (step 100): seconds = 0.2 * 100^(step/100). Log spacing
+     /** Set plate-reverb decay position (0..32), mapped exponentially
+ *      from 0.2 s (step 0, boot default) to 20 s (step 32). Log spacing
  *      keeps the short end usable - a linear seconds-per-click mapping
  *      would make the first clicks huge relative jumps. */
     void SetReverbDecayStep(int step)
     {
-        step = step < 0
-                   ? 0
-                   : (step > kMaxReverbDecaySteps ? kMaxReverbDecaySteps
-                                                  : step);
+        step = ParameterSteps::Clamp(step);
         reverb_decay_step_ = static_cast<uint8_t>(step);
-        plate_.SetDecaySeconds(
-            kMinReverbDecaySeconds
-            * powf(kMaxReverbDecaySeconds / kMinReverbDecaySeconds,
-                   static_cast<float>(step) * (1.f / kMaxReverbDecaySteps)));
+        plate_.SetDecaySeconds(ParameterSteps::ReverbDecaySeconds(step));
     }
 
     int GetReverbDecayStep() const { return reverb_decay_step_; }
 
-    /** Apply one encoder click to the stereo delay's combined
-     *  mix/feedback control (0..100 percent, clamped). 0..50 sweeps
+    /** Set the stereo delay's combined mix/feedback position (0..32),
+     *  mapped onto the existing 0..100 percent curve. 0..16 sweeps
      *  the dry/wet mix 0..50%: 0% is bit-exact dry; the ~10 ms
      *  crossfade ramp retargets from the current mix, click-free, and
      *  the delay lines keep running at dry mix (live tails). Above 50
@@ -636,14 +680,23 @@ class OrganEngine
      *  to 120%; past ~100% the delay self-oscillates into a bounded
      *  feedback drone whose pitch follows the delay time.
      *  Stored in the SD-card presets as `delay_mix`. */
-    void SetDelayMixPercent(int percent)
+    void SetDelayMixStep(int step)
     {
-        percent = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
-        delay_mix_percent_ = static_cast<uint8_t>(percent);
-        ApplyDelayCombined(static_cast<float>(percent));
+        delay_mix_step_ = static_cast<uint8_t>(ParameterSteps::Clamp(step));
+        ApplyDelayCombined(static_cast<float>(GetDelayMixPercent()));
     }
 
-    int GetDelayMixPercent() const { return delay_mix_percent_; }
+    int GetDelayMixStep() const { return delay_mix_step_; }
+
+    void SetDelayMixPercent(int percent)
+    {
+        SetDelayMixStep(ParameterSteps::LegacyPosition(percent, 0, 100));
+    }
+
+    int GetDelayMixPercent() const
+    {
+        return ParameterSteps::DelayCombinedPercent(delay_mix_step_);
+    }
 
     /** Modulation Mode: set the GLOBAL delay modulation amount
  *      (0..kMaxModSteps, clamped). The stereo delay's combined
@@ -664,21 +717,27 @@ class OrganEngine
 
     int GetDelayModStep() const { return delay_mod_step_; }
 
-    /** Set the stereo delay time in milliseconds (clamped 40..500; the
-     *  encoder edits in 5 ms clicks, preset files may carry any
-     *  in-range integer millisecond). The read position slews to the
+    /** Set stereo delay time position (0..32 across 40..500 ms). The
+     *  read position slews to the
      *  new time with a smooth BBD-like pitch glide; the echo history is
      *  never cleared. */
-    void SetDelayTimeMs(int ms)
+    void SetDelayTimeStep(int step)
     {
-        ms = ms < kMinDelayTimeMs
-                 ? kMinDelayTimeMs
-                 : (ms > kMaxDelayTimeMs ? kMaxDelayTimeMs : ms);
-        delay_time_ms_ = static_cast<uint16_t>(ms);
-        delay_.SetDelayMs(static_cast<float>(ms));
+        delay_time_step_ = static_cast<uint8_t>(ParameterSteps::Clamp(step));
+        delay_.SetDelayMs(static_cast<float>(GetDelayTimeMs()));
     }
 
-    int GetDelayTimeMs() const { return delay_time_ms_; }
+    int GetDelayTimeStep() const { return delay_time_step_; }
+
+    void SetDelayTimeMs(int ms)
+    {
+        SetDelayTimeStep(ParameterSteps::LegacyDelayPosition(ms));
+    }
+
+    int GetDelayTimeMs() const
+    {
+        return ParameterSteps::DelayTimeMs(delay_time_step_);
+    }
 
     /** Toggle the Hammond-style percussion (Play/Pause key). Off is an
      *  exact bypass: no trigger bookkeeping effect on the sound, exact
@@ -690,9 +749,18 @@ class OrganEngine
 
     bool GetPercussionEnabled() const { return percussion_.IsEnabled(); }
 
+    void SetMasterStep(int step)
+    {
+        master_step_ = static_cast<uint8_t>(ParameterSteps::Clamp(step));
+        master_gain_target_ = ParameterSteps::Normalized(master_step_);
+    }
+
+    int GetMasterStep() const { return master_step_; }
+
     void SetMasterGain(float g)
     {
-        master_gain_target_ = g < 0.f ? 0.f : (g > 1.f ? 1.f : g);
+        g = g < 0.f ? 0.f : (g > 1.f ? 1.f : g);
+        SetMasterStep(static_cast<int>(g * kMaxSteps + .5f));
     }
 
     float GetMasterGain() const { return master_gain_target_; }
@@ -721,21 +789,35 @@ class OrganEngine
         pb_in_r_ = r;
     }
 
-    void AddFineTuneCents(int delta)
+    void SetFineTuneStep(int step)
     {
-        int c = fine_cents_ + delta;
-        c = c < -50 ? -50 : (c > 50 ? 50 : c);
-        if(c != fine_cents_)
+        step = ParameterSteps::Clamp(step);
+        if(step != fine_step_)
         {
-            fine_cents_ = c;
-            /* one exp2f per encoder click, off the per-sample path;
-             * UpdateFreqs folds this into the note-table lookup */
-            fine_mult_   = exp2f(static_cast<float>(c) * (1.f / 1200.f));
+            fine_step_ = static_cast<uint8_t>(step);
+            fine_mult_ = exp2f(static_cast<float>(GetFineTuneCents())
+                               * (1.f / 1200.f));
             freqs_dirty_ = true;
         }
     }
 
-    int GetFineTuneCents() const { return fine_cents_; }
+    void AddFineTuneStep(int delta)
+    {
+        SetFineTuneStep(ParameterSteps::Advance(fine_step_, delta));
+    }
+
+    int GetFineTuneStep() const { return fine_step_; }
+
+    void AddFineTuneCents(int delta)
+    {
+        SetFineTuneStep(ParameterSteps::LegacyPosition(
+            GetFineTuneCents() + delta, -50, 50));
+    }
+
+    int GetFineTuneCents() const
+    {
+        return ParameterSteps::FineTuneCents(fine_step_);
+    }
 
     void NoteOn(uint8_t note, float velocity)
     {
@@ -890,7 +972,7 @@ class OrganEngine
             delay_mod_active_ = true;
             ApplyDelayCombined(
                 DriftModulator::ApplyWindow(
-                    static_cast<float>(delay_mix_percent_) * .01f,
+                    static_cast<float>(GetDelayMixPercent()) * .01f,
                     static_cast<float>(delay_mod_step_)
                         * (1.f / kMaxModSteps),
                     delay_mod_.Value())
@@ -899,7 +981,7 @@ class OrganEngine
         else if(delay_mod_active_)
         {
             delay_mod_active_ = false;
-            ApplyDelayCombined(static_cast<float>(delay_mix_percent_));
+            ApplyDelayCombined(static_cast<float>(GetDelayMixPercent()));
         }
 
         /* Modulation Mode drift: advance the twelve free-running
@@ -919,8 +1001,8 @@ class OrganEngine
             char_mod_[p].Advance(static_cast<int>(num_samples));
             length_mod_[p].Advance(static_cast<int>(num_samples));
             UpdatePipeGainTarget(p);
-            const float a_center = static_cast<float>(character_.GetStep(p))
-                                   * (1.f / kMaxCharacterSteps);
+            const float a_center = static_cast<float>(character_step_[p])
+                                   * (1.f / kMaxSteps);
             const float a_amount = static_cast<float>(char_mod_step_[p])
                                    * (1.f / kMaxModSteps);
             character_.SetModulatedTarget(
@@ -1211,8 +1293,7 @@ class OrganEngine
 
     static float StepToGain(int step)
     {
-        const float x = static_cast<float>(step) / kMaxSteps;
-        return x * x;
+        return ParameterSteps::PipeLevelGain(step);
     }
 
     /** Derive one pipe's gain target from its level-step center, its
@@ -1222,12 +1303,12 @@ class OrganEngine
      *  Prepare() and immediately from the level/mute setters. */
     void UpdatePipeGainTarget(int pipe)
     {
-        const float x  = static_cast<float>(pipe_steps[pipe]) / kMaxSteps;
+        const float x  = ParameterSteps::Normalized(pipe_steps[pipe]);
         const float am = static_cast<float>(vol_mod_step_[pipe])
                          * (1.f / kMaxModSteps);
         const float xm = DriftModulator::ApplyWindow(x, am,
                                                      vol_mod_[pipe].Value());
-        pipe_gain_target_[pipe] = pipe_muted_[pipe] ? 0.f : xm * xm;
+          pipe_gain_target_[pipe] = pipe_muted_[pipe] ? 0.f : xm * xm;
     }
 
     void UpdateFreqs(int v)
@@ -1237,7 +1318,8 @@ class OrganEngine
         for(int p = 0; p < kNumPipes; p++)
         {
             float f = base * PipeRatio(p)
-                       * PipeLengthMult(pipe_length_oct_[p]);
+                       * PipeLengthMult(ParameterSteps::PipeLengthOctave(
+                           pipe_length_step_[p]));
             while(f > kFoldbackHz)
                 f *= .5f; /* organ foldback: drop whole octaves */
             base_freq_[v][p] = f; /* vibrato multiplies this per sample */
@@ -1293,8 +1375,8 @@ class OrganEngine
     float    steal_inc_;
     Voice    voices_[kNumVoices];
     uint32_t age_counter_;
-    int      fine_cents_;
-    float    fine_mult_;     /* 2^(fine_cents_/1200), folded into the
+    uint8_t  fine_step_;
+    float    fine_mult_;     /* 2^(fine tune cents/1200), folded into the
                               * note table by UpdateFreqs */
     float    note_hz_[128];  /* A440 equal temperament, filled in Init() */
     bool     freqs_dirty_;
@@ -1302,6 +1384,7 @@ class OrganEngine
     float    pipe_gain_target_[kNumPipes];
     bool     pipe_muted_[kNumPipes]; /* boots unmuted; saved in presets */
     TonewheelCharacter character_;
+    uint8_t  character_step_[kNumPipes];
     uint8_t  vol_mod_step_[kNumPipes];  /* boot 0; saved in presets */
     uint8_t  char_mod_step_[kNumPipes]; /* boot 0; saved in presets */
     uint8_t  length_mod_step_[kNumPipes]; /* boot 0; saved in presets */
@@ -1313,6 +1396,7 @@ class OrganEngine
     bool     length_mod_active_; /* any length-mod amount > 0 (Prepare) */
     float    master_gain_;
     float    master_gain_target_;
+    uint8_t  master_step_;
     float   *rec_tap_l_ = nullptr; /* pre-gain record tap, -6 dB */
     float   *rec_tap_r_ = nullptr;
     const float *pb_in_l_ = nullptr; /* SD playback: post-tap,
@@ -1330,23 +1414,25 @@ class OrganEngine
     DriftModulator drive_mod_;    /* free-running global drive drift */
     RotarySpeaker rotary_;
     uint8_t  rotary_step_;
+    uint8_t  drive_tone_step_;
     uint8_t  pipe_attack_step_[kNumPipes];
     uint8_t  pipe_release_step_[kNumPipes];
-    int8_t   pipe_length_oct_[kNumPipes]; /* -2..+2; saved in presets */
+    uint8_t  pipe_length_step_[kNumPipes]; /* 0..32; saved in presets */
     float    attack_inc_[kNumPipes];
     float    release_inc_[kNumPipes];
     PlateReverb plate_;
     uint8_t  reverb_mix_step_;
     uint8_t  reverb_decay_step_;
     StereoBbdDelay delay_;
-    uint8_t  delay_mix_percent_;
-    uint16_t delay_time_ms_;
+    uint8_t  delay_mix_step_;
+    uint8_t  delay_time_step_;
     uint8_t  delay_mod_step_;     /* boot 0; saved in presets as the
                                    * global "delay_mod" field */
     DriftModulator delay_mod_;    /* free-running global delay drift */
     bool     delay_mod_active_;   /* the block-rate modulation is
                                    * applying (restore-on-zero gate) */
     Vibrato  vibrato_;
+    uint8_t  vibrato_depth_step_;
     uint8_t  vibrato_delay_step_; /* 0..50 x 100 ms; saved in presets */
     float    base_freq_[kNumVoices][kNumPipes]; /* pre-vibrato freqs */
     bool     note_held_[128];
