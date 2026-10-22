@@ -45,7 +45,17 @@ int main()
     assert((bytes == std::vector<uint8_t>{0xFA}));
     assert(midi.Started());
 
+    std::vector<uint8_t> usb_bytes;
+    auto usb_sink = [&](uint8_t byte) {
+        usb_bytes.push_back(byte);
+        return true;
+    };
+    assert(chompi::SendMidiBytePair(0xF8, sink, usb_sink));
+    assert((bytes == std::vector<uint8_t>{0xFA, 0xF8}));
+    assert((usb_bytes == std::vector<uint8_t>{0xF8}));
     bytes.clear();
+    usb_bytes.clear();
+
     event = {};
     event.midi_clock = true;
     assert(midi.Process(event, true, sink));

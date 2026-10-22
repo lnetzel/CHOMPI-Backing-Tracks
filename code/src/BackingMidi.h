@@ -109,6 +109,14 @@ class BackingMidi
     bool pending_clock_ = false;
 };
 
+template <typename SinkA, typename SinkB>
+bool SendMidiBytePair(uint8_t byte,
+                      SinkA &&sink_a,
+                      SinkB &&sink_b)
+{
+    return sink_a(byte) && sink_b(byte);
+}
+
 inline bool BackingMidiToggleOnPress(bool modifier_down,
                                      bool key_down,
                                      bool valid_entry,

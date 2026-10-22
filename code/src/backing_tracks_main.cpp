@@ -22,6 +22,7 @@ using namespace chompi;
 
 static Hardware hardware;
 static MidiUartHandler midi_uart;
+static MidiUsbHandler usb_midi;
 static SdmmcHandler sdmmc;
 static FatFSInterface fatfs;
 static BackingSet backing_set;
@@ -152,15 +153,24 @@ static int SelectedSongIndex()
     return encoded_song == 0 ? -1 : static_cast<int>(encoded_song - 1u);
 }
 
+static bool SendUsbMidiByte(uint8_t byte)
+{
+    usb_midi.SendMessage(&byte, 1);
+    return true;
+}
+
 static bool SendMidiByte(uint8_t byte)
 {
-    if((USART1->ISR & USART_ISR_TXE_TXFNF) == 0)
-    {
-        midi_error.store(true, std::memory_order_release);
-        return false;
-    }
-    USART1->TDR = byte;
-    return true;
+    const auto uart_send = [&](uint8_t data) {
+        if((USART1->ISR & USART_ISR_TXE_TXFNF) == 0)
+        {
+            midi_error.store(true, std::memory_order_release);
+            return false;
+        }
+        USART1->TDR = data;
+        return true;
+    };
+    return SendMidiBytePair(byte, uart_send, SendUsbMidiByte);
 }
 
 static void PublishSelectedSong(int song, bool reset_override = false)
@@ -1209,6 +1219,13 @@ int main(void)
     hardware.Init();
     MidiUartHandler::Config midi_config;
     midi_uart.Init(midi_config);
+
+    MidiUsbHandler::Config usb_midi_config;
+    usb_midi_config.transport_config.periph = MidiUsbTransport::Config::EXTERNAL;
+    usb_midi_config.transport_config.tx_retry_count = 0;
+    usb_midi.Init(usb_midi_config);
+    usb_midi.Listen();
+
     hardware.MpWrite(0x0c, 0B01010001);
     hardware.MpReadAll();
     for(size_t i = 0; i < 10; ++i)

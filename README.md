@@ -87,7 +87,7 @@ No automatic playback occurs at boot. The first song is selected and waits for P
 
 ## MIDI
 
-The physical DIN output sends MIDI Start at the first downbeat, 24-PPQN Clock while the timeline runs (including after pause), Stop on pause/stop/end, and Continue at a quantized resume boundary. Disabling output sends one Stop for an established session and suppresses later messages without affecting audio or click. Enabling during playback restarts the receiver at the next bar downbeat. A live override lasts for the selected set entry and is not saved. MIDI input, USB MIDI, and Song Position Pointer are not implemented. See [midi.md](midi.md) for receiver and pause behavior.
+The physical DIN output sends MIDI Start at the first downbeat, 24-PPQN Clock while the timeline runs (including after pause), Stop on pause/stop/end, and Continue at a quantized resume boundary. Disabling output sends one Stop for an established session and suppresses later messages without affecting audio or click. Enabling during playback restarts the receiver at the next bar downbeat. A live override lasts for the selected set entry and is not saved. USB MIDI on the external port is supported alongside DIN; MIDI input and Song Position Pointer are not implemented. See [midi.md](midi.md) for receiver and pause behavior.
 
 ## Build and Tests
 
