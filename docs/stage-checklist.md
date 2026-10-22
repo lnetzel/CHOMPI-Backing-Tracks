@@ -4,10 +4,13 @@
 
 - Prepare mono/stereo 48 kHz, signed 16-bit PCM WAV files; keep external backups.
 - Validate every entry in `BACKING-TRACKS/set.json`, including BPM, meter, first-downbeat offset, and advance mode.
+- Verify SHIFT+D# cycles wait/auto/loop with red/blue/yellow feedback while stopped, persists only the selected entry's `advance` value, and loops the full entry at EOF.
 - Test the exact SD card and all tracks on the target CHOMPI. Preflight the full set while stopped.
 - Confirm the physical aux input pair, left/right orientation, and whether any mic path is present.
 - Record headphone and main outputs separately. Confirm click reaches headphones and is absent from the digital/main route; measure analog crosstalk against a click-muted baseline.
 - Test the intended MIDI receiver's Start, Stop, Continue, and quantized-resume behavior.
+- Verify on the target unit that SHIFT/CHOMPI plus the first black key (C#) toggles MIDI output and that C# shows green/red preference through boot, selection, playback, pause, and level overlays.
+- Test enabled/disabled `midi_clock` entries through auto/wait advances, reload, and reboot; confirm live overrides are RAM-only and entry-specific.
 - Measure DIN start-bit timing under heavy SD reads and LED servicing; clock lateness/jitter must remain within 1 ms.
 - Run the full set and a long soak; investigate every underrun, clipping indication, storage error, or watchdog reset.
 

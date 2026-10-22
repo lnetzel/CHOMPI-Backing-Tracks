@@ -13,4 +13,27 @@ A silent lead-in emits no Start or Clock. When paused before the first downbeat,
 
 There is no Song Position Pointer or external-device seek. Continue does not guarantee that every receiver resumes at the same arrangement location. Receivers used on stage must support Start, Stop, and Continue.
 
-The audio callback writes one byte to the configured USART1 transmit register only when TX-empty is set; it does not call the foreground polling or DMA transmit APIs. A missed transmit slot is latched as an error and is not replayed as a burst. DIN start-bit timing and jitter under SD-card and LED load have not yet been measured on hardware; the acceptance limit is 1 ms.
+Hold SHIFT/CHOMPI and press the first black key (C#) to toggle DIN output.
+The C# LED is green when the selected entry's MIDI output preference is on and
+red when it is off; this reports the preference, not current wire traffic.
+Disabling sends one Stop if the external session has started, then suppresses
+Clock, Start, Stop, and Continue. Enabling while stopped or before the first
+downbeat waits for the normal first downbeat. Enabling during playback after
+the first downbeat waits for the next bar downbeat, sends Start, then resumes
+phase-aligned Clock. This restarts the receiver and does not seek it to the
+backing track's arrangement position. A disabled MIDI output does not stop WAV
+playback, internal timing, click, beat LEDs, or quantized audio resume.
+
+Each set entry may include `"midi_clock": true` or `"midi_clock": false`.
+Omission defaults to `true`. The live toggle override belongs to that entry,
+survives Stop/Play and pause/resume, and resets when another entry is selected
+or the set is reloaded. Overrides are RAM-only and are never written to mixer
+settings; reboot reads the JSON default again.
+
+While stopped, hold SHIFT/CHOMPI and press the second black key (D#) to cycle
+the selected entry's `advance` mode: `wait` (red), `auto` (blue), then `loop`
+(yellow). The selected mode is saved in `set.json` and takes effect on the next
+Play. `loop` restarts that same WAV at EOF; `auto` and `wait` do not wrap past
+the last entry.
+
+The audio callback writes one byte to the configured USART1 transmit register only when TX-empty is set; it does not call the foreground polling or DMA transmit APIs. A missed transmit slot is latched as an error and is not replayed as a burst. If Start and a phase-aligned Clock coincide, Clock is serialized one sample after Start. DIN start-bit timing and jitter under SD-card and LED load have not yet been measured on hardware; the acceptance limit is 1 ms.

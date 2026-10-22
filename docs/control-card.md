@@ -14,6 +14,10 @@
 - Play/Pause: start selected song; pause; arm quantized resume.
 - Play/Pause again while resume is pending: cancel and remain paused.
 - Loop: Stop, reset song to frame zero, stop click and MIDI clock.
+- Hold SHIFT/CHOMPI and press the first black key (C#): toggle MIDI DIN output.
+- C# LED: green when the selected entry's MIDI preference is enabled, red when disabled.
+- While stopped, hold SHIFT/CHOMPI and press the second black key (D#) to cycle advance mode.
+- D# LED: red for wait, blue for auto, yellow for loop. The mode is saved to `set.json`.
 - Toggle while stopped: choose song page 1 or 2.
 - White keys while stopped: select one of 15 entries on the current page.
 - Play/Pause LED: blinking green while playing; solid green while paused or waiting for resume.
@@ -24,9 +28,10 @@
 - WAV begins at frame zero. Click and MIDI Start wait for the configured first downbeat.
 - After the first downbeat, pause freezes WAV position but click and MIDI Clock continue.
 - Resume waits for the same musical position in a later bar.
-- `auto` advances to the next song; `wait` selects it and waits for Play. The set never wraps.
+- `auto` starts the next song; `wait` selects it and waits for Play; `loop` replays the current song. Auto and wait stop at the last entry.
 - The soft metronome tone is higher on the first beat of each bar.
 - Encoder 5's left LED flashes on bar downbeats; its right LED flashes on other beats. These flashes remain active when click audio is muted and continue during pause after the first downbeat.
+- MIDI output can be disabled without stopping playback, click, or internal timing. Re-enable during playback starts the receiver at the next bar downbeat.
 
 ## Errors
 

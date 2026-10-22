@@ -2,6 +2,7 @@
 #include "temp_led_stuff.h"
 #include "BackingMixer.h"
 #include "BackingFeedback.h"
+#include "BackingMidi.h"
 #include "BackingSet.h"
 #include "BackingTiming.h"
 #include "BackingTransport.h"
@@ -27,6 +28,7 @@ static BackingSet backing_set;
 static BackingRing playback_ring;
 static BackingTransport transport;
 static BackingTiming timing;
+static BackingMidi midi_output;
 static BackingClick metronome_click;
 static FIL set_file;
 static FIL wave_file;
@@ -43,6 +45,14 @@ static constexpr uint32_t kPlaybackRingFrames = 262144;
 static constexpr uint32_t kReadChunkFrames = 4096;
 static constexpr uint32_t kPrebufferFrames = 48000;
 static constexpr int kKeyCount = 15;
+static constexpr int kMidiClockToggleKey
+    = static_cast<int>(Hardware::SwId::KEY_16);
+static constexpr int kMidiClockModifierKey
+    = static_cast<int>(Hardware::SwId::KEY_26);
+static constexpr uint8_t kMidiClockLed = 0;
+static constexpr int kAdvanceToggleKey
+    = static_cast<int>(Hardware::SwId::KEY_17);
+static constexpr uint8_t kAdvanceModeLed = 1;
 static const int kWhiteKeys[kKeyCount] = {
     static_cast<int>(Hardware::SwId::KEY_1),
     static_cast<int>(Hardware::SwId::KEY_2),
@@ -61,7 +71,12 @@ static const int kWhiteKeys[kKeyCount] = {
     static_cast<int>(Hardware::SwId::KEY_15)};
 static const uint8_t kWhiteKeyLeds[kKeyCount] = {
     24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10};
-static std::atomic<int> selected_song{0};
+static std::atomic<uint32_t> midi_entry_publication{1};
+static std::atomic<bool> midi_clock_enabled_snapshot{true};
+static std::atomic<uint8_t> advance_mode_snapshot{
+    static_cast<uint8_t>(BackingAdvance::Wait)};
+static std::atomic<uint32_t> advance_edit_request{0};
+static std::atomic<uint32_t> handled_advance_edit_request{0};
 static std::atomic<bool> close_file_request{false};
 static std::atomic<bool> finish_request{false};
 static std::atomic<bool> reload_set_request{false};
@@ -89,9 +104,12 @@ static int active_settings_slot = -1;
 static std::atomic<uint8_t> active_page{0};
 static bool previous_play = false;
 static bool previous_stop = false;
+static bool previous_midi_toggle_key = false;
+static bool previous_advance_toggle_key = false;
+static size_t set_json_length = 0;
 static bool previous_keys[kKeyCount] = {};
 static bool timing_started = false;
-static bool midi_started = false;
+static uint32_t applied_midi_entry_publication = UINT32_MAX;
 static bool resume_phase_valid = false;
 static uint64_t resume_phase = 0;
 static volatile uint32_t audio_ticks = 0;
@@ -122,6 +140,13 @@ class GainSmoother
 
 static GainSmoother gains[5];
 
+static int SelectedSongIndex()
+{
+    const uint32_t encoded_song
+        = midi_entry_publication.load(std::memory_order_acquire) & 0x1fu;
+    return encoded_song == 0 ? -1 : static_cast<int>(encoded_song - 1u);
+}
+
 static bool SendMidiByte(uint8_t byte)
 {
     if((USART1->ISR & USART_ISR_TXE_TXFNF) == 0)
@@ -131,6 +156,71 @@ static bool SendMidiByte(uint8_t byte)
     }
     USART1->TDR = byte;
     return true;
+}
+
+static void PublishSelectedSong(int song, bool reset_override = false)
+{
+    uint32_t published = midi_entry_publication.load(std::memory_order_acquire);
+    for(;;)
+    {
+        const uint32_t encoded_song = published & 0x1fu;
+        const int current_song
+            = encoded_song == 0 ? -1 : static_cast<int>(encoded_song - 1u);
+        if(!reset_override && current_song == song)
+            return;
+        const uint32_t next_revision = (published & ~0x1fu) + 0x20u;
+        const uint32_t next_song
+            = song >= 0 ? static_cast<uint32_t>(song + 1) : 0u;
+        const uint32_t next = next_revision | next_song;
+        if(midi_entry_publication.compare_exchange_weak(
+               published, next, std::memory_order_release,
+               std::memory_order_acquire))
+            return;
+    }
+}
+
+static void PublishAdvanceEdit(int song, BackingAdvance advance)
+{
+    uint32_t published = advance_edit_request.load(std::memory_order_acquire);
+    for(;;)
+    {
+        const uint32_t revision = (published & ~0x7fu) + 0x80u;
+        const uint32_t next = revision
+                              | (static_cast<uint32_t>(song + 1) << 2u)
+                              | static_cast<uint32_t>(advance);
+        if(advance_edit_request.compare_exchange_weak(
+               published, next, std::memory_order_release,
+               std::memory_order_acquire))
+            return;
+    }
+}
+
+static bool AdvanceEditPending()
+{
+    return advance_edit_request.load(std::memory_order_acquire)
+           != handled_advance_edit_request.load(std::memory_order_acquire);
+}
+
+static void SyncMidiEntry()
+{
+    const uint32_t publication
+        = midi_entry_publication.load(std::memory_order_acquire);
+    if(publication == applied_midi_entry_publication)
+        return;
+    const uint32_t encoded_song = publication & 0x1fu;
+    const int song
+        = encoded_song == 0 ? -1 : static_cast<int>(encoded_song - 1u);
+    const bool valid = set_valid.load(std::memory_order_acquire) && song >= 0
+                       && static_cast<size_t>(song) < backing_set.count;
+    const bool enabled = valid && backing_set.songs[song].midi_clock;
+    const BackingAdvance advance
+        = valid ? backing_set.songs[song].advance : BackingAdvance::Wait;
+    if(!midi_output.ApplyEntry(enabled, SendMidiByte))
+        midi_error.store(true, std::memory_order_release);
+    midi_clock_enabled_snapshot.store(enabled, std::memory_order_release);
+    advance_mode_snapshot.store(static_cast<uint8_t>(advance),
+                                std::memory_order_release);
+    applied_midi_entry_publication = publication;
 }
 
 static bool ResolveWavePath(const char *relative_path)
@@ -164,8 +254,13 @@ static bool LoadSetFromCard()
     failed_song.store(-1, std::memory_order_release);
     if(disk_status(0) != RES_OK)
         return false;
+    bool recovered_backup = false;
     if(f_open(&set_file, "BACKING-TRACKS/set.json", FA_READ) != FR_OK)
-        return false;
+    {
+        if(f_open(&set_file, "BACKING-TRACKS/set.json.BAK", FA_READ) != FR_OK)
+            return false;
+        recovered_backup = true;
+    }
     const FSIZE_t file_size = f_size(&set_file);
     if(file_size == 0 || file_size > kBackingMaxSetBytes)
     {
@@ -179,8 +274,61 @@ static bool LoadSetFromCard()
     if(result != FR_OK || bytes_read != file_size)
         return false;
     set_json[bytes_read] = '\0';
+    set_json_length = bytes_read;
     if(!ParseBackingSet(set_json, bytes_read, backing_set))
         return false;
+    if(recovered_backup
+       && f_rename("BACKING-TRACKS/set.json.BAK",
+                   "BACKING-TRACKS/set.json") != FR_OK)
+        return false;
+    return true;
+}
+
+static bool SaveSetJson()
+{
+    static const char temporary[] = "BACKING-TRACKS/set.json.TMP";
+    static const char destination[] = "BACKING-TRACKS/set.json";
+    static const char backup[] = "BACKING-TRACKS/set.json.BAK";
+    if(set_json_length == 0 || set_json_length > kBackingMaxSetBytes)
+        return false;
+
+    UINT bytes_written = 0;
+    if(f_open(&set_file, temporary, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+        return false;
+    bool success = f_write(&set_file, set_json,
+                           static_cast<UINT>(set_json_length), &bytes_written)
+                       == FR_OK
+                   && bytes_written == set_json_length
+                   && f_sync(&set_file) == FR_OK;
+    if(f_close(&set_file) != FR_OK)
+        success = false;
+    if(!success || f_open(&set_file, temporary, FA_READ) != FR_OK)
+        return false;
+
+    UINT bytes_read = 0;
+    const FSIZE_t verify_size = f_size(&set_file);
+    success = verify_size == set_json_length
+              && f_read(&set_file, read_buffer,
+                        static_cast<UINT>(set_json_length), &bytes_read)
+                     == FR_OK
+              && bytes_read == set_json_length
+              && memcmp(read_buffer, set_json, set_json_length) == 0;
+    if(f_close(&set_file) != FR_OK)
+        success = false;
+    if(!success)
+        return false;
+
+    const FRESULT remove_backup = f_unlink(backup);
+    if(remove_backup != FR_OK && remove_backup != FR_NO_FILE)
+        return false;
+    if(f_rename(destination, backup) != FR_OK)
+        return false;
+    if(f_rename(temporary, destination) != FR_OK)
+    {
+        f_rename(backup, destination);
+        return false;
+    }
+    f_unlink(backup);
     return true;
 }
 
@@ -268,6 +416,10 @@ static void ServiceSetReload()
        || transport.GetState() != BackingTransport::State::Stopped)
         return;
     reload_set_request.store(false, std::memory_order_release);
+    advance_edit_request.store(0, std::memory_order_release);
+    handled_advance_edit_request.store(0, std::memory_order_release);
+    set_valid.store(false, std::memory_order_release);
+    PublishSelectedSong(-1, true);
     if(disk_status(0) != RES_OK)
     {
         storage_error.store(true, std::memory_order_release);
@@ -279,11 +431,64 @@ static void ServiceSetReload()
     storage_error.store(!valid, std::memory_order_release);
     if(valid)
     {
-        selected_song.store(0, std::memory_order_release);
+        PublishSelectedSong(0, true);
         LoadSettings();
         for(size_t i = 0; i < kBackingLevelCount; ++i)
             gains[i].Init(level_steps[i]);
     }
+}
+
+static void ServiceAdvanceEdit()
+{
+    const uint32_t request
+        = advance_edit_request.load(std::memory_order_acquire);
+    if(request == 0
+       || request == handled_advance_edit_request.load(std::memory_order_acquire))
+        return;
+
+    const int song = static_cast<int>((request >> 2u) & 0x1fu) - 1;
+    const BackingAdvance advance
+        = static_cast<BackingAdvance>(request & 0x3u);
+    const bool valid = transport.GetState() == BackingTransport::State::Stopped
+                       && set_valid.load(std::memory_order_acquire)
+                       && song >= 0
+                       && static_cast<size_t>(song) < backing_set.count
+                       && BackingAdvanceName(advance) != NULL;
+    if(valid && backing_set.songs[song].advance != advance)
+    {
+        const BackingAdvance previous = backing_set.songs[song].advance;
+        if(RewriteBackingAdvance(set_json, set_json_length,
+                                 static_cast<size_t>(song), advance)
+           && SaveSetJson())
+        {
+            __disable_irq();
+            backing_set.songs[song].advance = advance;
+            __enable_irq();
+        }
+        else
+        {
+            RewriteBackingAdvance(set_json, set_json_length,
+                                  static_cast<size_t>(song), previous);
+            storage_error.store(true, std::memory_order_release);
+            const uint32_t latest
+                = advance_edit_request.load(std::memory_order_acquire);
+            if(latest == request && SelectedSongIndex() == song)
+                advance_mode_snapshot.store(static_cast<uint8_t>(previous),
+                                            std::memory_order_release);
+        }
+    }
+    else if(!valid)
+    {
+        const uint32_t latest
+            = advance_edit_request.load(std::memory_order_acquire);
+        const int selected = SelectedSongIndex();
+        if(latest == request && selected >= 0
+           && static_cast<size_t>(selected) < backing_set.count)
+            advance_mode_snapshot.store(
+                static_cast<uint8_t>(backing_set.songs[selected].advance),
+                std::memory_order_release);
+    }
+    handled_advance_edit_request.store(request, std::memory_order_release);
 }
 
 static void MarkSettingsDirty()
@@ -395,7 +600,7 @@ static void CloseWave()
 
 static bool OpenSelectedWave()
 {
-    const int index = selected_song.load(std::memory_order_acquire);
+    const int index = SelectedSongIndex();
     if(!set_valid.load(std::memory_order_acquire) || index < 0
        || static_cast<size_t>(index) >= backing_set.count
     || !ResolveWavePath(backing_set.songs[index].file)
@@ -488,13 +693,16 @@ static void ServicePlayback()
     {
         CloseWave();
         playback_ring.Reset();
-        const int current = selected_song.load(std::memory_order_relaxed);
-        if(current >= 0 && static_cast<size_t>(current + 1) < backing_set.count)
+        const int current = SelectedSongIndex();
+        if(current >= 0 && static_cast<size_t>(current) < backing_set.count)
         {
-            const int next = current + 1;
-            selected_song.store(next, std::memory_order_release);
-            if(backing_set.songs[current].advance_auto)
-                transport.BeginLoad(next);
+            const BackingAdvanceDecision decision = BackingAdvanceAtEof(
+                backing_set.songs[current].advance,
+                static_cast<size_t>(current), backing_set.count);
+            if(decision.selected_song != current)
+                PublishSelectedSong(decision.selected_song);
+            if(decision.begin_load)
+                transport.BeginLoad(decision.selected_song);
         }
     }
 
@@ -504,7 +712,7 @@ static void ServicePlayback()
         playback_ring.Reset();
         if(!OpenSelectedWave())
         {
-            failed_song.store(selected_song.load(std::memory_order_relaxed),
+            failed_song.store(SelectedSongIndex(),
                               std::memory_order_release);
             storage_error.store(true, std::memory_order_release);
             transport.Fail();
@@ -545,7 +753,7 @@ static void SetSelectedSong(int song)
     if(!set_valid.load(std::memory_order_acquire) || song < 0
        || static_cast<size_t>(song) >= backing_set.count)
         return;
-    selected_song.store(song, std::memory_order_release);
+    PublishSelectedSong(song);
     storage_error.store(false, std::memory_order_release);
 }
 
@@ -586,7 +794,7 @@ static void PollControls()
     {
         const int movement = hardware.enc[4].Increment();
         if(movement != 0)
-            SetSelectedSong(selected_song.load(std::memory_order_relaxed)
+            SetSelectedSong(SelectedSongIndex()
                             + movement);
         for(int key = 0; key < kKeyCount; ++key)
         {
@@ -605,6 +813,28 @@ static void PollControls()
             previous_keys[key]
                 = hardware.button_sr.State(kWhiteKeys[key]);
     }
+    SyncMidiEntry();
+
+    const bool advance_key_down
+        = hardware.button_sr.State(kAdvanceToggleKey);
+    const bool advance_modifier_down
+        = hardware.button_sr.State(kMidiClockModifierKey);
+    const int selected_for_advance = SelectedSongIndex();
+    const bool valid_advance_entry
+        = set_valid.load(std::memory_order_acquire)
+          && selected_for_advance >= 0
+          && static_cast<size_t>(selected_for_advance) < backing_set.count;
+    if(BackingMidiToggleOnPress(advance_modifier_down, advance_key_down,
+                                valid_advance_entry && stopped,
+                                previous_advance_toggle_key))
+    {
+        const BackingAdvance current = static_cast<BackingAdvance>(
+            advance_mode_snapshot.load(std::memory_order_acquire));
+        const BackingAdvance next = NextBackingAdvance(current);
+        advance_mode_snapshot.store(static_cast<uint8_t>(next),
+                                    std::memory_order_release);
+        PublishAdvanceEdit(selected_for_advance, next);
+    }
 
     const bool play_down
         = hardware.button_sr.State(static_cast<int>(Hardware::SwId::KEY_27));
@@ -613,12 +843,13 @@ static void PollControls()
         const BackingTransport::State current = transport.GetState();
         if(current == BackingTransport::State::Stopped)
         {
-            if(!settings_saving.load(std::memory_order_acquire))
+            if(!AdvanceEditPending()
+               && !settings_saving.load(std::memory_order_acquire))
             {
                 if(set_valid.load(std::memory_order_acquire))
                 {
                     transport.BeginLoad(
-                        selected_song.load(std::memory_order_relaxed));
+                        SelectedSongIndex());
                     storage_error.store(false, std::memory_order_release);
                 }
                 else
@@ -628,10 +859,8 @@ static void PollControls()
         else if(current == BackingTransport::State::Playing)
         {
             transport.Pause();
-            if(midi_started)
-            {
-                SendMidiByte(0xFC);
-            }
+            if(!midi_output.Pause(SendMidiByte))
+                midi_error.store(true, std::memory_order_release);
         }
         else if(current == BackingTransport::State::Paused)
         {
@@ -650,12 +879,10 @@ static void PollControls()
         = hardware.button_sr.State(static_cast<int>(Hardware::SwId::KEY_28));
     if(stop_down && !previous_stop)
     {
-        if(midi_started)
-        {
-            SendMidiByte(0xFC);
-            midi_started = false;
-        }
-        if((USART1->ISR & USART_ISR_TXE_TXFNF) != 0)
+        const bool midi_stop_succeeded = midi_output.Stop(SendMidiByte);
+        if(!midi_stop_succeeded)
+            midi_error.store(true, std::memory_order_release);
+        else if((USART1->ISR & USART_ISR_TXE_TXFNF) != 0)
             midi_error.store(false, std::memory_order_release);
         transport.Stop();
         timing.Stop();
@@ -666,6 +893,22 @@ static void PollControls()
         close_file_request.store(true, std::memory_order_release);
     }
     previous_stop = stop_down;
+
+    const bool midi_key_down = hardware.button_sr.State(kMidiClockToggleKey);
+    const bool midi_modifier_down
+        = hardware.button_sr.State(kMidiClockModifierKey);
+    const int selected = SelectedSongIndex();
+    const bool valid_entry = set_valid.load(std::memory_order_acquire)
+                             && selected >= 0
+                             && static_cast<size_t>(selected) < backing_set.count;
+    if(BackingMidiToggleOnPress(midi_modifier_down, midi_key_down, valid_entry,
+                                previous_midi_toggle_key))
+    {
+        const bool enabled = !midi_output.Enabled();
+        if(!midi_output.SetEnabled(enabled, timing.Active(), SendMidiByte))
+            midi_error.store(true, std::memory_order_release);
+        midi_clock_enabled_snapshot.store(enabled, std::memory_order_release);
+    }
 }
 
 static void AudioCallback(AudioHandle::InputBuffer input,
@@ -674,25 +917,24 @@ static void AudioCallback(AudioHandle::InputBuffer input,
 {
     ++audio_ticks;
     hardware.ProcessAllControls();
+    SyncMidiEntry();
     PollControls();
+    SyncMidiEntry();
 
     for(size_t frame = 0; frame < size; ++frame)
     {
         BackingTransport::State state = transport.GetState();
         if(state == BackingTransport::State::Error && timing_started)
         {
-            if(midi_started)
-            {
-                SendMidiByte(0xFC);
-                midi_started = false;
-            }
+            if(!midi_output.Stop(SendMidiByte))
+                midi_error.store(true, std::memory_order_release);
             timing.Stop();
             timing_started = false;
             resume_phase_valid = false;
         }
         if(state == BackingTransport::State::Playing && !timing_started)
         {
-            const int index = selected_song.load(std::memory_order_relaxed);
+            const int index = SelectedSongIndex();
             timing.Start(backing_set.songs[index]);
             beat_seen.store(false, std::memory_order_release);
             timing_started = true;
@@ -703,38 +945,32 @@ static void AudioCallback(AudioHandle::InputBuffer input,
         if(timing_started
            && (state == BackingTransport::State::Playing || timing.Active()))
             timing_event = timing.AdvanceFrame();
-        if(timing_event.midi_start)
-        {
-            if(SendMidiByte(0xFA))
-                midi_started = true;
-            else
-            {
-                transport.Fail();
-                timing.Stop();
-                timing_started = false;
-                state = BackingTransport::State::Error;
-            }
-        }
-        if(timing_event.midi_clock && !SendMidiByte(0xF8))
-        {
-            transport.Fail();
-            timing.Stop();
-            timing_started = false;
-            state = BackingTransport::State::Error;
-        }
         if(state == BackingTransport::State::PendingResume
            && timing.Active() && resume_phase_valid
            && timing.CrossedBarPhase(resume_phase))
         {
             transport.ResumeAtBoundary();
             resume_phase_valid = false;
-            if(midi_started && !SendMidiByte(0xFB))
+            if(!midi_output.Continue(SendMidiByte))
             {
+                midi_output.Stop(SendMidiByte);
                 transport.Fail();
                 timing.Stop();
                 timing_started = false;
+                state = BackingTransport::State::Error;
             }
             state = transport.GetState();
+        }
+        if(!midi_output.Process(
+               timing_event, state == BackingTransport::State::Playing,
+               SendMidiByte))
+        {
+            midi_output.Stop(SendMidiByte);
+            transport.Fail();
+            timing.Stop();
+            timing_started = false;
+            resume_phase_valid = false;
+            state = BackingTransport::State::Error;
         }
         if(timing_event.click)
         {
@@ -755,21 +991,15 @@ static void AudioCallback(AudioHandle::InputBuffer input,
                 timing.Stop();
                 timing_started = false;
                 close_file_request.store(true, std::memory_order_release);
-                if(midi_started)
-                {
-                    SendMidiByte(0xFC);
-                    midi_started = false;
-                }
+                if(!midi_output.Stop(SendMidiByte))
+                    midi_error.store(true, std::memory_order_release);
                 state = BackingTransport::State::Error;
             }
             if(popped && transport.ConsumedFrames() >= wave_info.frame_count
                && playback_ring.AvailableToRead() == 0)
             {
-                if(midi_started)
-                {
-                    SendMidiByte(0xFC);
-                    midi_started = false;
-                }
+                if(!midi_output.Stop(SendMidiByte))
+                    midi_error.store(true, std::memory_order_release);
                 transport.Complete();
                 timing.Stop();
                 timing_started = false;
@@ -816,11 +1046,11 @@ static void UpdateLeds()
     const bool valid_set = set_valid.load(std::memory_order_acquire);
     const int failed = failed_song.load(std::memory_order_acquire);
     const int current_page = active_page.load(std::memory_order_acquire);
-    const int selected = selected_song.load(std::memory_order_acquire);
+    const int selected = SelectedSongIndex();
     for(int key = 0; key < kKeyCount; ++key)
     {
         const int index = current_page * kKeyCount + key;
-        if(static_cast<size_t>(index) >= backing_set.count)
+        if(!valid_set || static_cast<size_t>(index) >= backing_set.count)
             continue;
         if(index == selected)
         {
@@ -890,6 +1120,29 @@ static void UpdateLeds()
         }
     }
 
+    if(valid_set && selected >= 0
+       && static_cast<size_t>(selected) < backing_set.count)
+    {
+        if(midi_clock_enabled_snapshot.load(std::memory_order_acquire))
+            SetSmtLed(kMidiClockLed, 0, 255, 0);
+        else
+            SetSmtLed(kMidiClockLed, 255, 0, 0);
+
+        switch(static_cast<BackingAdvance>(
+            advance_mode_snapshot.load(std::memory_order_acquire)))
+        {
+            case BackingAdvance::Wait:
+                SetSmtLed(kAdvanceModeLed, 255, 0, 0);
+                break;
+            case BackingAdvance::Auto:
+                SetSmtLed(kAdvanceModeLed, 0, 0, 255);
+                break;
+            case BackingAdvance::Loop:
+                SetSmtLed(kAdvanceModeLed, 255, 255, 0);
+                break;
+        }
+    }
+
     const bool clipped = clipping.exchange(false, std::memory_order_acq_rel);
     if(storage_error.load(std::memory_order_acquire)
        || midi_error.load(std::memory_order_acquire)
@@ -920,6 +1173,7 @@ static void MainLoop()
     }
     ServiceCardPresence();
     ServiceSetReload();
+    ServiceAdvanceEdit();
     ServicePlayback();
     ServiceSettings();
     UpdateLeds();
@@ -954,7 +1208,7 @@ int main(void)
     if(disk_status(0) == RES_OK)
         LoadSettings();
     if(set_valid.load(std::memory_order_acquire))
-        selected_song.store(0, std::memory_order_release);
+        PublishSelectedSong(0, true);
     else
         storage_error.store(true, std::memory_order_release);
 
@@ -980,6 +1234,10 @@ int main(void)
 
     for(int key = 0; key < kKeyCount; ++key)
         previous_keys[key] = hardware.button_sr.State(kWhiteKeys[key]);
+    previous_midi_toggle_key
+        = hardware.button_sr.State(kMidiClockToggleKey);
+    previous_advance_toggle_key
+        = hardware.button_sr.State(kAdvanceToggleKey);
     previous_play = hardware.button_sr.State(
         static_cast<int>(Hardware::SwId::KEY_27));
     previous_stop = hardware.button_sr.State(

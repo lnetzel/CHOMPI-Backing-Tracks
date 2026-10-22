@@ -6,14 +6,24 @@
       "bpm": 120,
       "meter": [4, 4],
       "first_downbeat_ms": 0,
-      "advance": "auto"
+      "advance": "auto",
+      "midi_clock": true
     },
     {
       "file": "TRACKS/02-song.wav",
       "bpm": 98.5,
       "meter": [6, 8],
       "first_downbeat_ms": 350,
-      "advance": "wait"
+      "advance": "wait",
+      "midi_clock": false
+    },
+    {
+      "file": "TRACKS/01-intro.wav",
+      "bpm": 120,
+      "meter": [4, 4],
+      "first_downbeat_ms": 0,
+      "advance": "loop",
+      "midi_clock": true
     }
   ]
 }

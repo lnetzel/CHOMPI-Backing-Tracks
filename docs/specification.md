@@ -21,9 +21,9 @@ The digital main-output pair must be exactly zero for click-only input. Physical
 
 One active set contains 1-30 ordered song entries and is presented as two pages of 15. Entries may reference one WAV more than once with different metadata. The firmware never autoplays: entry 1 is selected after boot and waits for Play.
 
-Store the read-only set at `BACKING-TRACKS/set.json` and WAV files under `BACKING-TRACKS/TRACKS/`. A set entry has exactly these fields: `file`, `bpm`, `meter`, `first_downbeat_ms`, and `advance`. Version 1 uses top-level `version: 1` and `songs` array. Reject invalid JSON, duplicate or unknown fields, empty sets, more than 30 entries, paths longer than 127 bytes, absolute paths, traversal, and set files larger than 16 KiB. Song paths are relative to `BACKING-TRACKS/`, for example `TRACKS/song.wav`.
+Store the set at `BACKING-TRACKS/set.json` and WAV files under `BACKING-TRACKS/TRACKS/`. A set entry requires `file`, `bpm`, `meter`, `first_downbeat_ms`, and `advance`, and may include `midi_clock`. Version 1 uses top-level `version: 1` and `songs` array. `advance` accepts `auto`, `wait`, or `loop`; the stopped-state SHIFT+D# control updates only the selected entry's value and persists it through a verified temporary file and backup rename. `midi_clock` must be a JSON boolean and defaults to `true`; duplicate instances and other JSON types are invalid. Reject invalid JSON, duplicate or unknown fields, empty sets, more than 30 entries, paths longer than 127 bytes, absolute paths, traversal, and set files larger than 16 KiB. Song paths are relative to `BACKING-TRACKS/`, for example `TRACKS/song.wav`.
 
-Each song uses constant BPM 30-300, a meter of 2/4 through 12/4 or 3/8 through 12/8, a nonnegative first-downbeat offset in milliseconds, and `advance` set to `auto` or `wait`. BPM always counts quarter notes. In /8 meters, the audible click counts eighth notes and accents the bar downbeat.
+Each song uses constant BPM 30-300, a meter of 2/4 through 12/4 or 3/8 through 12/8, a nonnegative first-downbeat offset in milliseconds, and `advance` set to `auto`, `wait`, or `loop`. `auto` starts the next entry, `wait` selects the next entry and waits for Play, and `loop` restarts the same entry at EOF. Auto and wait stop at the last entry. BPM always counts quarter notes. In /8 meters, the audible click counts eighth notes and accents the bar downbeat.
 
 Accept ordinary RIFF/WAVE chunk ordering, padding, unknown chunks, and extended PCM `fmt ` chunks. Require PCM signed 16-bit, 48 kHz, one or two channels, consistent byte rate and block alignment, complete nonempty frames, a bounded file/chunk layout, and a first downbeat inside the audio duration. Reject truncated or unsupported files explicitly. Preflight files while stopped.
 
@@ -33,11 +33,12 @@ Accept ordinary RIFF/WAVE chunk ordering, padding, unknown chunks, and extended 
 - Pause freezes the consumed audio frame, not the read-ahead cursor. Before the first downbeat, freeze the remaining lead-in. After it, click and 24-PPQN MIDI clock continue while MIDI Stop is sent.
 - Play while paused arms resume at the next occurrence of the saved musical position modulo the full bar, including sub-beat position. Keep click/clock phase running; send Continue at the actual resume boundary. Play again cancels the pending resume. Stop cancels it and resets the entry.
 - The first-downbeat offset gates click and MIDI Start; WAV playback begins at frame zero. Start is sent before the first clock tick. Stop halts timing and resets the entry.
-- Determine EOF from the final consumed sample after ring drain. `wait` stops timing, selects the next entry, and waits for Play. `auto` preloads and starts the next entry with a new timing origin. The final entry never wraps. Transition gaps are allowed and timing is stopped during them.
+- Determine EOF from the final consumed sample after ring drain. `wait` stops timing, selects the next entry, and waits for Play. `auto` preloads and starts the next entry with a new timing origin. `loop` preloads the same entry and starts it again. Auto and wait do not wrap. Transition gaps are allowed and timing is stopped during them.
+- MIDI output preference is per entry. A live override survives Stop/Play, pause/resume, and WAV reopen for that entry; selecting another entry or reloading the set restores its JSON default. Overrides are RAM-only and never enter mixer settings.
 - Errors fail closed for that entry. Never skip a song silently. Stop track/click/clock, preserve aux, and require explicit recovery while stopped.
 - Derive audio position, bars, click, and 24-PPQN MIDI clock from one fractional sample timebase. Do not use rounded integer beat lengths or main-loop millisecond scheduling. Do not burst stale MIDI clock ticks to catch up.
 
-MIDI output is the physical DIN port. Receivers must support Start, Stop, and Continue. Continue phase does not promise arrangement-position seeking on every receiver. USB MIDI, MIDI input control, Song Position Pointer, tap tempo, and count-in are out of scope.
+MIDI output is the physical DIN port. Hold SHIFT/CHOMPI and press C# to toggle its preference; the C# LED is green when enabled and red when disabled. OFF sends one Stop for an established session, then suppresses all MIDI bytes without stopping audio or internal timing. ON during playback waits for the next bar downbeat and sends Start before phase-aligned Clock; this restarts a receiver rather than seeking it to the backing arrangement position. Receivers must support Start, Stop, and Continue. Continue phase does not promise arrangement-position seeking on every receiver. USB MIDI, MIDI input control, Song Position Pointer, tap tempo, and count-in are out of scope.
 
 ## Controls
 
@@ -46,6 +47,7 @@ MIDI output is the physical DIN port. Receivers must support Start, Stop, and Co
 - Encoder 6: main-output level.
 - Play/Pause key: play, pause, or arm/cancel quantized resume.
 - Loop key: Stop; it has no loop function.
+- While stopped, hold SHIFT/CHOMPI and press D# to cycle the selected entry's persistent `advance` value; the D# LED shows wait red, auto blue, or loop yellow.
 - Fifteen white keys select entries on the current page. The hardware toggle selects page 1 or 2; empty keys are inert. Selection and page changes take effect only while stopped.
 - Encoder pushes do not change pages or reveal hidden controls. Preserve power, shipping, and bootloader gestures.
 - LEDs distinguish available/selected entries, playback states, beat/downbeat, clipping, SD/config/audio errors, and pending/failed settings writes. Temporary level bars must not hide latched errors.

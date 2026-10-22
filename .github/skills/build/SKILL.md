@@ -4,7 +4,7 @@ description: 'Build the CHOMPI-PIPES firmware with make. Use when: building, com
 argument-hint: '[clean] [cpu-meter]'
 ---
 
-# Build CHOMPI-PIPES Firmware
+# Build CHOMPI-Backing-Tracks Firmware
 
 Builds the firmware per the "Building on Windows" section of the repo README and, after **every** build, presents a memory-usage table for the SRAM, SRAM_EXEC and SDRAM regions.
 
@@ -21,21 +21,22 @@ Builds the firmware per the "Building on Windows" section of the repo README and
 Invoke the MSYS2 UCRT64 bash from the terminal so the right shell/environment is used. From PowerShell:
 
 ```powershell
-C:\msys64\usr\bin\bash.exe -lc 'export PATH="/c/armgnu/10.3-2021.10/bin:$PATH"; cd /c/Dev/CHOMPI-Pipes/code/src && make -j4 DEBUG=0 OPT=-O3'
+C:\msys64\usr\bin\bash.exe -lc 'export PATH="/c/armgnu/10.3-2021.10/bin:$PATH"; cd /c/Dev/CHOMPI-backing-tracks/code/src && make -j4 DEBUG=0 OPT=-O3'
 ```
 
 Variants:
 
 - First build / toolchain sanity check: add `make check-toolchain` before the build (must print GCC 10.3.1).
 - Clean rebuild: `make clean` first.
-- CPU-meter build (user passes `cpu-meter`): append `PIPES_CPU_METER=1`.
-- If the user requests a build without full test coverage, run only the firmware build and required memory report; do not run the native test suite unless they explicitly ask for it.
+- CPU-meter build (user passes `cpu-meter`): append `CPU_METER=1`.
+- A build request runs only the firmware build and required memory report. Do not run tests by default.
+- If the user explicitly requests both a build and tests (for example, "build and test"), run the native test suite after the firmware build succeeds: `make -C /c/Dev/CHOMPI-backing-tracks/code/tests test` from the MSYS2 UCRT64 shell. Report test results separately from the firmware build and memory usage.
 
 If `C:\msys64\usr\bin\bash.exe` does not exist, locate the MSYS2 install (check `C:\msys64`, or ask the user) and adjust.
 
 ### 2. Verify success
 
-Build succeeds when it completes with no errors and produces `code/src/build/CHOMPI_PIPES_1.0.bin` (BOOT_SRAM app type). On failure, show the relevant compiler/linker errors and stop.
+Build succeeds when it completes with no errors and produces `code/src/build/CHOMPI_BACKING_TRACKS_1.0.bin` (BOOT_SRAM app type). On failure, show the relevant compiler/linker errors and stop.
 
 ### 3. ALWAYS report memory usage (required after every build)
 
@@ -61,7 +62,7 @@ Add a one-line note if any region exceeds 90% used (SRAM is the usual bottleneck
 **Fallback** if the memory-usage lines are missing from the output: run
 
 ```powershell
-C:\msys64\usr\bin\bash.exe -lc 'export PATH="/c/armgnu/10.3-2021.10/bin:$PATH"; arm-none-eabi-size -A /c/Dev/CHOMPI-Pipes/code/src/build/CHOMPI_PIPES_1.0.elf'
+C:\msys64\usr\bin\bash.exe -lc 'export PATH="/c/armgnu/10.3-2021.10/bin:$PATH"; arm-none-eabi-size -A /c/Dev/CHOMPI-backing-tracks/code/src/build/CHOMPI_BACKING_TRACKS_1.0.elf'
 ```
 
 and sum section sizes by load address (per `code/src/chompi_sram.lds`):
@@ -74,6 +75,6 @@ and sum section sizes by load address (per `code/src/chompi_sram.lds`):
 
 ## Notes
 
-- Output binary: `code/src/build/CHOMPI_PIPES_1.0.bin` — install by copying it to the SD card root (delete other `.bin` files); do not flash the bootloader.
+- Output binary: `code/src/build/CHOMPI_BACKING_TRACKS_1.0.bin` — install by copying it to the SD card root (delete other `.bin` files); do not flash the bootloader.
 - Do **not** rebuild the vendored libDaisy/DaisySP libraries unless asked; the build links the committed prebuilt `.a` files.
-- Native DSP tests are a separate target (`make -C code/tests test`) and are not part of the firmware build.
+- Native DSP tests are a separate target (`make -C code/tests test`); run them only when the user explicitly requests tests alongside the build.

@@ -13,6 +13,11 @@ The repository retains history from CHOMPI-Pipes, starting at `1e2bc676184d5ddb5
 - Encoder 6: main-output level.
 - Play/Pause key: start, pause, or arm quantized resume.
 - Loop key: Stop and reset the selected song.
+- Hold SHIFT/CHOMPI and press the first black key (C#) to toggle MIDI DIN
+  output. The C# key LED is green when enabled and red when disabled.
+- While stopped, hold SHIFT/CHOMPI and press the second black key (D#) to cycle
+  the selected song's advance mode: wait (red), auto (blue), loop (yellow).
+  The selected mode is saved to `set.json` and applies the next time you play.
 - The toggle selects page 1 (songs 1-15) or page 2 (songs 16-30) while stopped. White keys select a song on the active page. Empty keys do nothing.
 - Song selection and page changes are ignored during playback, pause, loading, and pending resume. Encoder pushes have no assigned action.
 
@@ -24,7 +29,7 @@ The metronome uses a soft, decaying tone with a higher-pitched first beat of eac
 
 ## SD Card
 
-Prepare audio as 48 kHz, signed 16-bit PCM WAV, mono or stereo. Mono is duplicated to both sides. No resampling, compressed audio, RF64, tempo maps, recording, effects, loop playback, or gapless transition is supported.
+Prepare audio as 48 kHz, signed 16-bit PCM WAV, mono or stereo. Mono is duplicated to both sides. No resampling, compressed audio, RF64, tempo maps, recording, effects, or gapless transition is supported.
 
 Create this layout at the card root:
 
@@ -38,7 +43,11 @@ BACKING-TRACKS/
     02-song.wav
 ```
 
-The firmware reads but never rewrites `BACKING-TRACKS/set.json`. Song paths in the set are relative to `BACKING-TRACKS/`. Example:
+Song paths in `BACKING-TRACKS/set.json` are relative to `BACKING-TRACKS/`.
+The firmware updates only the selected entry's `advance` value when changed
+with SHIFT+D# while stopped; it verifies a temporary file before replacing the
+set and keeps a backup during replacement. MIDI clock overrides remain
+RAM-only. Example:
 
 ```json
 {
@@ -49,26 +58,36 @@ The firmware reads but never rewrites `BACKING-TRACKS/set.json`. Song paths in t
       "bpm": 120,
       "meter": [4, 4],
       "first_downbeat_ms": 0,
-      "advance": "auto"
+      "advance": "auto",
+      "midi_clock": true
     },
     {
       "file": "TRACKS/02-song.wav",
       "bpm": 98.5,
       "meter": [6, 8],
       "first_downbeat_ms": 350,
-      "advance": "wait"
+      "advance": "wait",
+      "midi_clock": false
+    },
+    {
+      "file": "TRACKS/01-intro.wav",
+      "bpm": 120,
+      "meter": [4, 4],
+      "first_downbeat_ms": 0,
+      "advance": "loop",
+      "midi_clock": true
     }
   ]
 }
 ```
 
-The set supports 1-30 ordered entries, 127-byte relative paths, and a 16 KiB file limit. BPM is 30-300 and always counts quarter notes. In /8 meters the click counts eighth notes. `first_downbeat_ms` gates click and MIDI Start but WAV playback begins at frame zero. `advance` is `auto` or `wait`; the last entry never wraps. Repeated file paths are allowed. The parser rejects traversal, absolute paths, duplicate/unknown fields, invalid ranges, unsupported WAV formats, and truncated files. See [the full specification](docs/specification.md) and [example set](docs/examples/set.json).
+The set supports 1-30 ordered entries, 127-byte relative paths, and a 16 KiB file limit. BPM is 30-300 and always counts quarter notes. In /8 meters the click counts eighth notes. `first_downbeat_ms` gates click and MIDI Start but WAV playback begins at frame zero. `advance` is `auto`, `wait`, or `loop`: auto starts the next entry, wait selects the next entry and waits for Play, and loop replays the same entry. Auto and wait do not wrap after the last entry. Optional `midi_clock` must be a JSON boolean and defaults to `true`. Repeated file paths are allowed. The parser rejects traversal, absolute paths, duplicate/unknown fields, invalid ranges, unsupported WAV formats, and truncated files. See [the full specification](docs/specification.md) and [example set](docs/examples/set.json).
 
 No automatic playback occurs at boot. The first song is selected and waits for Play. Aux monitoring remains active if the card or set is missing, during transport stops/pauses, and on file errors. After card removal or replacement, press Play while stopped to reload the set and settings; this does not start playback. Press Play again to start the selected song.
 
 ## MIDI
 
-The physical DIN output sends MIDI Start at the first downbeat, 24-PPQN Clock while the timeline runs (including after pause), Stop on pause/stop/end, and Continue at a quantized resume boundary. MIDI input, USB MIDI, and Song Position Pointer are not implemented. See [midi.md](midi.md) for receiver and pause behavior.
+The physical DIN output sends MIDI Start at the first downbeat, 24-PPQN Clock while the timeline runs (including after pause), Stop on pause/stop/end, and Continue at a quantized resume boundary. Disabling output sends one Stop for an established session and suppresses later messages without affecting audio or click. Enabling during playback restarts the receiver at the next bar downbeat. A live override lasts for the selected set entry and is not saved. MIDI input, USB MIDI, and Song Position Pointer are not implemented. See [midi.md](midi.md) for receiver and pause behavior.
 
 ## Build and Tests
 

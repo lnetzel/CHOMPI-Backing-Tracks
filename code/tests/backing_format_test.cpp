@@ -83,7 +83,91 @@ int main(int argc, char **argv)
     assert(set.songs[0].bpm == 98.5f);
     assert(set.songs[0].meter_numerator == 6);
     assert(set.songs[0].meter_denominator == 8);
-    assert(!set.songs[0].advance_auto);
+    assert(set.songs[0].advance == chompi::BackingAdvance::Wait);
+    assert(set.songs[0].midi_clock);
+
+    const char *midi_defaults
+        = "{\"version\":1,\"songs\":["
+          "{\"file\":\"TRACKS/a.wav\",\"bpm\":120,"
+          "\"meter\":[4,4],\"first_downbeat_ms\":0,"
+          "\"advance\":\"auto\",\"midi_clock\":false},"
+          "{\"file\":\"TRACKS/a.wav\",\"bpm\":120,"
+          "\"meter\":[4,4],\"first_downbeat_ms\":0,"
+          "\"advance\":\"wait\",\"midi_clock\":true},"
+          "{\"file\":\"TRACKS/b.wav\",\"bpm\":120,"
+          "\"meter\":[4,4],\"first_downbeat_ms\":0,"
+          "\"advance\":\"auto\"}]}";
+    assert(chompi::ParseBackingSet(midi_defaults,
+                                   std::strlen(midi_defaults), set));
+    assert(set.count == 3);
+    assert(!set.songs[0].midi_clock);
+    assert(set.songs[1].midi_clock);
+    assert(set.songs[2].midi_clock);
+
+    const char *loop_mode
+        = "{\"version\":1,\"songs\":[{\"file\":\"TRACKS/a.wav\","
+          "\"bpm\":120,\"meter\":[4,4],\"first_downbeat_ms\":0,"
+          "\"advance\":\"loop\"}]}";
+    assert(chompi::ParseBackingSet(loop_mode, std::strlen(loop_mode), set));
+    assert(set.songs[0].advance == chompi::BackingAdvance::Loop);
+
+    char rewritten[512];
+    std::memcpy(rewritten, midi_defaults, std::strlen(midi_defaults) + 1);
+    assert(chompi::RewriteBackingAdvance(
+        rewritten, std::strlen(rewritten), 1, chompi::BackingAdvance::Loop));
+    assert(std::strstr(rewritten, "\"advance\":\"loop\"") != NULL);
+    assert(std::strstr(rewritten, "\"midi_clock\":true") != NULL);
+    chompi::BackingSet rewritten_set = {};
+    assert(chompi::ParseBackingSet(rewritten, std::strlen(rewritten),
+                                   rewritten_set));
+    assert(rewritten_set.songs[1].advance == chompi::BackingAdvance::Loop);
+    assert(rewritten_set.songs[0].advance == chompi::BackingAdvance::Auto);
+    assert(!chompi::RewriteBackingAdvance(
+        rewritten, std::strlen(rewritten), 3, chompi::BackingAdvance::Wait));
+    assert(chompi::NextBackingAdvance(chompi::BackingAdvance::Wait)
+           == chompi::BackingAdvance::Auto);
+    assert(chompi::NextBackingAdvance(chompi::BackingAdvance::Auto)
+           == chompi::BackingAdvance::Loop);
+    assert(chompi::NextBackingAdvance(chompi::BackingAdvance::Loop)
+           == chompi::BackingAdvance::Wait);
+    const chompi::BackingAdvanceDecision wait_decision
+        = chompi::BackingAdvanceAtEof(chompi::BackingAdvance::Wait, 0, 2);
+    assert(wait_decision.selected_song == 1 && !wait_decision.begin_load);
+    const chompi::BackingAdvanceDecision auto_decision
+        = chompi::BackingAdvanceAtEof(chompi::BackingAdvance::Auto, 0, 2);
+    assert(auto_decision.selected_song == 1 && auto_decision.begin_load);
+    const chompi::BackingAdvanceDecision loop_decision
+        = chompi::BackingAdvanceAtEof(chompi::BackingAdvance::Loop, 1, 2);
+    assert(loop_decision.selected_song == 1 && loop_decision.begin_load);
+    const chompi::BackingAdvanceDecision final_auto_decision
+        = chompi::BackingAdvanceAtEof(chompi::BackingAdvance::Auto, 1, 2);
+    assert(final_auto_decision.selected_song == 1
+           && !final_auto_decision.begin_load);
+    assert(chompi::BackingAdvanceAtEof(chompi::BackingAdvance::Wait, 2, 2)
+               .selected_song
+           == -1);
+
+    const char *duplicate_midi_clock
+        = "{\"version\":1,\"songs\":[{\"file\":\"TRACKS/a.wav\","
+          "\"bpm\":120,\"meter\":[4,4],\"first_downbeat_ms\":0,"
+          "\"advance\":\"auto\",\"midi_clock\":true,"
+          "\"midi_clock\":false}]}";
+    assert(!chompi::ParseBackingSet(duplicate_midi_clock,
+                                    std::strlen(duplicate_midi_clock), set));
+    const char *invalid_midi_clock[] = {
+        "null", "0", "\"true\"", "[]", "{}"};
+    for(const char *value : invalid_midi_clock)
+    {
+        char invalid[256];
+        const int length = std::snprintf(
+            invalid, sizeof(invalid),
+            "{\"version\":1,\"songs\":[{\"file\":\"TRACKS/a.wav\","
+            "\"bpm\":120,\"meter\":[4,4],\"first_downbeat_ms\":0,"
+            "\"advance\":\"auto\",\"midi_clock\":%s}]}", value);
+        assert(length > 0 && static_cast<size_t>(length) < sizeof(invalid));
+        assert(!chompi::ParseBackingSet(invalid,
+                                       static_cast<size_t>(length), set));
+    }
 
     const char *duplicate
         = "{\"version\":1,\"version\":1,\"songs\":[{\"file\":\"a.wav\","

@@ -135,6 +135,7 @@ inline bool ParseSong(const char *json,
 {
     if(object.jsonType != JSONObject)
         return false;
+    song.midi_clock = true;
     const size_t offset = static_cast<size_t>(object.value - json);
     size_t start = offset;
     size_t next = offset;
@@ -174,16 +175,23 @@ inline bool ParseSong(const char *json,
         else if(KeyIs(field, "advance"))
         {
             bit = 1u << 4;
-            if(field.jsonType != JSONString)
+            if(field.jsonType != JSONString || field.valueLength != 4)
                 return false;
-            if(field.valueLength == 4
-               && memcmp(field.value, "auto", 4) == 0)
-                song.advance_auto = true;
-            else if(field.valueLength == 4
-                    && memcmp(field.value, "wait", 4) == 0)
-                song.advance_auto = false;
+            if(memcmp(field.value, "auto", 4) == 0)
+                song.advance = BackingAdvance::Auto;
+            else if(memcmp(field.value, "wait", 4) == 0)
+                song.advance = BackingAdvance::Wait;
+            else if(memcmp(field.value, "loop", 4) == 0)
+                song.advance = BackingAdvance::Loop;
             else
                 return false;
+        }
+        else if(KeyIs(field, "midi_clock"))
+        {
+            bit = 1u << 5;
+            if(field.jsonType != JSONTrue && field.jsonType != JSONFalse)
+                return false;
+            song.midi_clock = field.jsonType == JSONTrue;
         }
         else
             return false;
@@ -192,7 +200,7 @@ inline bool ParseSong(const char *json,
         seen |= bit;
         status = JSON_Iterate(json, length, &start, &next, &field);
     }
-    return status == JSONNotFound && seen == 0x1fu;
+    return status == JSONNotFound && (seen & 0x1fu) == 0x1fu;
 }
 
 } // namespace backing_set_detail
@@ -257,6 +265,92 @@ inline bool ParseBackingSet(const char *json, size_t length, BackingSet &set)
     if(status != JSONNotFound || seen != 0x3u)
         return false;
     set = parsed;
+    return true;
+}
+
+inline bool RewriteBackingAdvance(char *json,
+                                  size_t length,
+                                  size_t song_index,
+                                  BackingAdvance advance)
+{
+    const char *replacement = BackingAdvanceName(advance);
+    if(json == NULL || length == 0 || replacement == NULL
+       || JSON_Validate(json, length) != JSONSuccess)
+        return false;
+
+    size_t root_start = backing_set_detail::CollectionOffset(json, length);
+    size_t root_next = root_start;
+    JSONPair_t field = {};
+    JSONStatus_t status
+        = JSON_Iterate(json, length, &root_start, &root_next, &field);
+    bool songs_found = false;
+    size_t token_offset = 0;
+    bool token_found = false;
+    while(status == JSONSuccess)
+    {
+        if(backing_set_detail::KeyIs(field, "songs"))
+        {
+            if(songs_found || field.jsonType != JSONArray)
+                return false;
+            songs_found = true;
+            size_t array_start = static_cast<size_t>(field.value - json);
+            size_t array_next = array_start;
+            JSONPair_t entry = {};
+            JSONStatus_t array_status = JSON_Iterate(
+                json, length, &array_start, &array_next, &entry);
+            size_t index = 0;
+            while(array_status == JSONSuccess)
+            {
+                if(index == song_index)
+                {
+                    if(entry.jsonType != JSONObject)
+                        return false;
+                    size_t object_start
+                        = static_cast<size_t>(entry.value - json);
+                    size_t object_next = object_start;
+                    JSONPair_t song_field = {};
+                    JSONStatus_t object_status = JSON_Iterate(
+                        json, length, &object_start, &object_next, &song_field);
+                    while(object_status == JSONSuccess)
+                    {
+                        if(backing_set_detail::KeyIs(song_field, "advance"))
+                        {
+                            if(token_found || song_field.jsonType != JSONString
+                               || song_field.valueLength != 4)
+                                return false;
+                            token_offset
+                                = static_cast<size_t>(song_field.value - json);
+                            token_found = true;
+                        }
+                        object_status = JSON_Iterate(
+                            json, length, &object_start, &object_next,
+                            &song_field);
+                    }
+                    if(object_status != JSONNotFound || !token_found)
+                        return false;
+                    break;
+                }
+                ++index;
+                array_status = JSON_Iterate(json, length, &array_start,
+                                             &array_next, &entry);
+            }
+            if(array_status != JSONSuccess && array_status != JSONNotFound)
+                return false;
+        }
+        status = JSON_Iterate(json, length, &root_start, &root_next, &field);
+    }
+    if(status != JSONNotFound || !songs_found || !token_found
+       || token_offset > length || length - token_offset < 4)
+        return false;
+
+    char previous[4];
+    memcpy(previous, json + token_offset, sizeof(previous));
+    memcpy(json + token_offset, replacement, sizeof(previous));
+    if(JSON_Validate(json, length) != JSONSuccess)
+    {
+        memcpy(json + token_offset, previous, sizeof(previous));
+        return false;
+    }
     return true;
 }
 
