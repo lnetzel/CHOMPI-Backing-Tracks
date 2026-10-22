@@ -21,9 +21,14 @@ inline bool BackingLevelVisible(uint32_t now, uint32_t changed_at)
     return now - changed_at < 1500u;
 }
 
-inline bool BackingBeatVisible(uint32_t now, uint32_t beat_at)
+inline bool BackingMetronomeBlinkVisible(uint32_t now, uint32_t beat_at)
 {
     return now - beat_at < 80u;
+}
+
+inline bool BackingBeatVisible(uint32_t now, uint32_t beat_at)
+{
+    return BackingMetronomeBlinkVisible(now, beat_at);
 }
 
 inline bool BackingPlayLight(BackingTransport::State state, uint32_t now)

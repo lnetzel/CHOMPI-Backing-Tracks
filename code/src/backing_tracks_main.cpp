@@ -53,6 +53,11 @@ static constexpr uint8_t kMidiClockLed = 0;
 static constexpr int kAdvanceToggleKey
     = static_cast<int>(Hardware::SwId::KEY_17);
 static constexpr uint8_t kAdvanceModeLed = 1;
+static constexpr uint8_t kEncoder1Led = 1;
+static constexpr uint8_t kEncoder2Led = 2;
+static constexpr uint8_t kEncoder3Led = 3;
+static constexpr uint8_t kEncoder4Led = 4;
+static constexpr uint8_t kLoopLed = 8;
 static const int kWhiteKeys[kKeyCount] = {
     static_cast<int>(Hardware::SwId::KEY_1),
     static_cast<int>(Hardware::SwId::KEY_2),
@@ -1043,6 +1048,9 @@ static void UpdateLeds()
     for(int i = 0; i < 25; ++i)
         SetSmtLed(i, 0, 0, 0);
     const bool blink = ((now / 250u) & 1u) != 0;
+    const bool beat_blink = beat_seen.load(std::memory_order_acquire)
+                            && BackingMetronomeBlinkVisible(
+                                now, beat_at.load(std::memory_order_acquire));
     const bool valid_set = set_valid.load(std::memory_order_acquire);
     const int failed = failed_song.load(std::memory_order_acquire);
     const int current_page = active_page.load(std::memory_order_acquire);
@@ -1055,7 +1063,7 @@ static void UpdateLeds()
         if(index == selected)
         {
             if(transport.GetState() == BackingTransport::State::Playing
-               && !blink)
+               && beat_blink)
                 continue;
             SetSmtLed(kWhiteKeyLeds[key], 0, 160, 255);
         }
@@ -1079,18 +1087,33 @@ static void UpdateLeds()
     {
         const uint8_t step = static_cast<uint8_t>((levels >> (control * 6u)) & 63u);
         const uint8_t lit_keys = BackingLevelBar(step);
+        uint8_t r = 255, g = 255, b = 255;
+        switch(control)
+        {
+            case 0:
+                r = 0; g = 160; b = 255; break;
+            case 1:
+                r = 255; g = 255; b = 0; break;
+            case 2:
+                r = 128; g = 0; b = 128; break;
+            case 3:
+                r = 0; g = 255; b = 0; break;
+            default:
+                r = 255; g = 255; b = 255; break;
+        }
         for(int key = 0; key < kKeyCount; ++key)
         {
             if(key >= lit_keys)
                 SetSmtLed(kWhiteKeyLeds[key], 0, 0, 0);
-            else if(key < 8)
-                SetSmtLed(kWhiteKeyLeds[key], 0, 255, 0);
-            else if(key < 12)
-                SetSmtLed(kWhiteKeyLeds[key], 255, 150, 0);
             else
-                SetSmtLed(kWhiteKeyLeds[key], 255, 0, 0);
+                SetSmtLed(kWhiteKeyLeds[key], r, g, b);
         }
     }
+
+    SetPthLedFloat(kEncoder1Led, 0.f, 160.f / 255.f, 1.f);
+    SetPthLedFloat(kEncoder2Led, 1.f, 1.f, 0.f);
+    SetPthLedFloat(kEncoder3Led, .5f, 0.f, .5f);
+    SetPthLedFloat(kEncoder4Led, 0.f, 1.f, 0.f);
 
     if(beat_seen.load(std::memory_order_acquire)
        && (state == BackingTransport::State::Playing
@@ -1106,7 +1129,7 @@ static void UpdateLeds()
     if(BackingPlayLight(state, now))
         SetPthLedFloat(7, 0.f, 1.f, 0.f);
     if(BackingStopLight(state))
-        SetPthLedFloat(8, 1.f, .2f, 0.f);
+        SetPthLedFloat(kLoopLed, 1.f, 0.f, 0.f);
 
     if(failed >= 0)
     {

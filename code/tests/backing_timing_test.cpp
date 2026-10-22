@@ -1,3 +1,4 @@
+#include "BackingFeedback.h"
 #include "BackingTiming.h"
 
 #include <cassert>
@@ -47,6 +48,10 @@ int main()
     assert(click_count == 2);
     assert(downbeats == 1);
     assert(std::abs(first_click_interval - 24000) <= 1);
+    assert(chompi::BackingMetronomeBlinkVisible(79u, 0u));
+    assert(!chompi::BackingMetronomeBlinkVisible(80u, 0u));
+    assert(chompi::BackingMetronomeBlinkVisible(100u, 20u));
+    assert(!chompi::BackingMetronomeBlinkVisible(100u, 19u));
 
     song.bpm = 98.5f;
     song.meter_numerator = 6;
