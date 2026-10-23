@@ -31,7 +31,10 @@
  * the value by default is as defined in the BSP platform driver otherwise 30 secs
  */
 
-#define SD_TIMEOUT 30 * 1000
+#define SD_TIMEOUT (30U * 1000U)
+#define SD_ABORT_TIMEOUT 100U
+#define SD_ABORT_RESERVE 150U
+#define SD_EDITOR_MAX_OPERATION 1500U
 
 #define SD_DEFAULT_BLOCK_SIZE 512
 
@@ -57,8 +60,11 @@
 /* Disk status */
 static volatile DSTATUS Stat = STA_NOINIT;
 //static volatile  UINT  WriteStatus = 0, ReadStatus = 0;
-static uint32_t WriteStatus = 0;
-static uint32_t ReadStatus  = 0;
+static volatile uint32_t WriteStatus = 0;
+static volatile uint32_t ReadStatus  = 0;
+static volatile uint32_t OperationDeadline = 0;
+static volatile uint8_t Quarantined = 0;
+extern SD_HandleTypeDef hsd1;
 /* Private function prototypes -----------------------------------------------*/
 static DSTATUS SD_CheckStatus(BYTE lun);
 DSTATUS        SD_initialize(BYTE);
@@ -70,6 +76,84 @@ DRESULT SD_write(BYTE, const BYTE *, DWORD, UINT);
 #if _USE_IOCTL == 1
 DRESULT SD_ioctl(BYTE, BYTE, void *);
 #endif /* _USE_IOCTL == 1 */
+
+void SD_SetOperationDeadline(uint32_t deadline)
+{
+    OperationDeadline = deadline;
+}
+
+void SD_ClearOperationDeadline(void)
+{
+    OperationDeadline = 0;
+}
+
+uint8_t SD_IsQuarantined(void)
+{
+    return Quarantined;
+}
+
+static uint32_t SD_OperationTimeout(void)
+{
+    const uint32_t deadline = OperationDeadline;
+    if(deadline == 0)
+        return SD_TIMEOUT;
+
+    const int32_t remaining = (int32_t)(deadline - HAL_GetTick());
+    if(remaining <= (int32_t)SD_ABORT_RESERVE)
+        return 0;
+
+    const uint32_t bounded = (uint32_t)remaining - SD_ABORT_RESERVE;
+    return bounded < SD_EDITOR_MAX_OPERATION ? bounded
+                                              : SD_EDITOR_MAX_OPERATION;
+}
+
+static uint8_t SD_OperationTimedOut(uint32_t started_at, uint32_t timeout)
+{
+    if((HAL_GetTick() - started_at) >= timeout)
+        return 1;
+
+    const uint32_t deadline = OperationDeadline;
+    return deadline != 0
+           && (int32_t)(deadline - HAL_GetTick())
+                  <= (int32_t)SD_ABORT_RESERVE;
+}
+
+static uint8_t SD_TransferReady(void)
+{
+    const uint32_t deadline = OperationDeadline;
+    if(deadline == 0)
+        return BSP_SD_GetCardState() == SD_TRANSFER_OK;
+
+    uint32_t card_status = 0;
+    const uint32_t error = SDMMC_CmdSendStatusWithTimeout(
+        hsd1.Instance, (uint32_t)(hsd1.SdCard.RelCardAdd << 16u), 25U,
+        &card_status);
+    if(error != SDMMC_ERROR_NONE)
+        return 0;
+    return ((card_status >> 9u) & 0x0fu) == HAL_SD_CARD_TRANSFER;
+}
+
+static void SD_QuiesceTimedOutTransfer(void)
+{
+    NVIC_DisableIRQ(SDMMC1_IRQn);
+    __HAL_SD_DISABLE_IT(&hsd1, SDMMC_IT_DATAEND | SDMMC_IT_DCRCFAIL
+                                   | SDMMC_IT_DTIMEOUT | SDMMC_IT_TXUNDERR
+                                   | SDMMC_IT_RXOVERR);
+    hsd1.Instance->IDMACTRL = SDMMC_DISABLE_IDMA;
+    __HAL_SD_CLEAR_FLAG(&hsd1, SDMMC_STATIC_CMD_FLAGS);
+    (void)SDMMC_CmdStopTransferWithTimeout(hsd1.Instance,
+                                            SD_ABORT_TIMEOUT);
+    hsd1.Instance->DCTRL = 0;
+    __HAL_SD_CLEAR_FLAG(&hsd1, SDMMC_STATIC_FLAGS);
+    __HAL_RCC_SDMMC1_FORCE_RESET();
+    __HAL_RCC_SDMMC1_RELEASE_RESET();
+    hsd1.State = HAL_SD_STATE_READY;
+    hsd1.Context = SD_CONTEXT_NONE;
+    NVIC_ClearPendingIRQ(SDMMC1_IRQn);
+    NVIC_EnableIRQ(SDMMC1_IRQn);
+    Quarantined = 1;
+    Stat = STA_NOINIT;
+}
 
 const Diskio_drvTypeDef SD_Driver = {
     SD_initialize,
@@ -88,6 +172,9 @@ const Diskio_drvTypeDef SD_Driver = {
 static DSTATUS SD_CheckStatus(BYTE lun)
 {
     Stat = STA_NOINIT;
+
+    if(Quarantined != 0)
+        return Stat;
 
     if(BSP_SD_GetCardState() == MSD_OK)
     {
@@ -108,6 +195,7 @@ DSTATUS SD_initialize(BYTE lun)
 
     if(BSP_SD_Init() == MSD_OK)
     {
+        Quarantined = 0;
         Stat = SD_CheckStatus(lun);
     }
 
@@ -124,6 +212,8 @@ DSTATUS SD_initialize(BYTE lun)
   */
 DSTATUS SD_status(BYTE lun)
 {
+    if(Quarantined != 0)
+        return STA_NOINIT;
     return SD_CheckStatus(lun);
 }
 
@@ -139,7 +229,10 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
 {
     DRESULT res = RES_ERROR;
     ReadStatus  = 0;
-    uint32_t timeout;
+    const uint32_t timeout = SD_OperationTimeout();
+    const uint32_t started_at = HAL_GetTick();
+    if(Quarantined != 0 || timeout == 0)
+        return RES_NOTRDY;
 #if(ENABLE_SD_DMA_CACHE_MAINTENANCE == 1)
     uint32_t alignedAddr;
     alignedAddr = (uint32_t)buff & ~0x1F;
@@ -150,21 +243,19 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
        == MSD_OK)
     {
         /* Wait that the reading process is completed or a timeout occurs */
-        timeout = HAL_GetTick();
-        while((ReadStatus == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT)) {}
+          while(ReadStatus == 0 && !SD_OperationTimedOut(started_at, timeout)) {}
         /* incase of a timeout return error */
         if(ReadStatus == 0)
         {
+            SD_QuiesceTimedOutTransfer();
             res = RES_ERROR;
         }
         else
         {
             ReadStatus = 0;
-            timeout    = HAL_GetTick();
-
-            while((HAL_GetTick() - timeout) < SD_TIMEOUT)
+            while(!SD_OperationTimedOut(started_at, timeout))
             {
-                if(BSP_SD_GetCardState() == SD_TRANSFER_OK)
+                if(SD_TransferReady())
                 {
                     res = RES_OK;
 #if(ENABLE_SD_DMA_CACHE_MAINTENANCE == 1)
@@ -177,6 +268,8 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
                     break;
                 }
             }
+            if(res != RES_OK)
+                SD_QuiesceTimedOutTransfer();
         }
     }
 
@@ -196,7 +289,10 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
 {
     DRESULT res = RES_ERROR;
     WriteStatus = 0;
-    uint32_t timeout;
+    const uint32_t timeout = SD_OperationTimeout();
+    const uint32_t started_at = HAL_GetTick();
+    if(Quarantined != 0 || timeout == 0)
+        return RES_NOTRDY;
 #if(ENABLE_SD_DMA_CACHE_MAINTENANCE == 1)
     uint32_t alignedAddr;
 #endif
@@ -220,26 +316,27 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
        == MSD_OK)
     {
         /* Wait that writing process is completed or a timeout occurs */
-        timeout = HAL_GetTick();
-        while((WriteStatus == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT)) {}
+          while(WriteStatus == 0
+              && !SD_OperationTimedOut(started_at, timeout)) {}
         /* incase of a timeout return error */
         if(WriteStatus == 0)
         {
+            SD_QuiesceTimedOutTransfer();
             res = RES_ERROR;
         }
         else
         {
             WriteStatus = 0;
-            timeout     = HAL_GetTick();
-
-            while((HAL_GetTick() - timeout) < SD_TIMEOUT)
+            while(!SD_OperationTimedOut(started_at, timeout))
             {
-                if(BSP_SD_GetCardState() == SD_TRANSFER_OK)
+                if(SD_TransferReady())
                 {
                     res = RES_OK;
                     break;
                 }
             }
+            if(res != RES_OK)
+                SD_QuiesceTimedOutTransfer();
         }
     }
 

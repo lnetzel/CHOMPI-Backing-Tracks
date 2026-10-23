@@ -24,7 +24,7 @@ class BackingTiming
 
     void Start(const BackingSong &song)
     {
-        bpm_ = song.bpm;
+        bpm_ = static_cast<double>(song.bpm_hundredths) / 100.0;
         beat_count_ = song.meter_numerator;
         denominator_ = song.meter_denominator;
         lead_frames_ = static_cast<uint64_t>(song.first_downbeat_ms) * 48u;

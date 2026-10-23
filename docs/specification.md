@@ -25,6 +25,8 @@ Store the set at `BACKING-TRACKS/set.json` and WAV files under `BACKING-TRACKS/T
 
 Each song uses constant BPM 30-300, a meter of 2/4 through 12/4 or 3/8 through 12/8, a nonnegative first-downbeat offset in milliseconds, and `advance` set to `auto`, `wait`, or `loop`. `auto` starts the next entry, `wait` selects the next entry and waits for Play, and `loop` restarts the same entry at EOF. Auto and wait stop at the last entry. BPM always counts quarter notes. In /8 meters, the audible click counts eighth notes and accents the bar downbeat.
 
+BPM accepts JSON numbers from 30 through 300 inclusive, including extra decimal places and exponent notation. The effective tempo is rounded to the nearest hundredth with decimal half-up rounding and is used consistently for click, MIDI clock, beat/bar phase, and quantized resume. Loading or inspecting a higher-precision value does not rewrite its JSON token. A changed tempo is saved as an ordinary number with exactly two decimals.
+
 Accept ordinary RIFF/WAVE chunk ordering, padding, unknown chunks, and extended PCM `fmt ` chunks. Require PCM signed 16-bit, 48 kHz, one or two channels, consistent byte rate and block alignment, complete nonempty frames, a bounded file/chunk layout, and a first downbeat inside the audio duration. Reject truncated or unsupported files explicitly. Preflight files while stopped.
 
 ## Transport and timing
@@ -48,6 +50,9 @@ MIDI output is the physical DIN port. Hold SHIFT/CHOMPI and press C# to toggle i
 - Play/Pause key: play, pause, or arm/cancel quantized resume.
 - Loop key: Stop; it has no loop function.
 - While stopped, hold SHIFT/CHOMPI and press D# to cycle the selected entry's persistent `advance` value; the D# LED shows wait red, auto blue, or loop yellow.
+- While fully stopped, SHIFT/CHOMPI plus lower F#, lower G#, lower A#, upper C#, or upper D# latches the hundreds, tens, ones, tenths, or hundredths digit. White keys 1-9 enter digits 1-9 and white key 10 enters 0. The selected position and saved digit light white; a changed digit is persisted immediately and the editor exits after success. SHIFT/CHOMPI exits without a write.
+- The BPM editor locks normal controls and freezes the displayed page. The page switch's current position is applied on exit without changing selection. Intermediate edits must remain in the inclusive 30.00-300.00 range; invalid choices are rejected, not clamped.
+- BPM edits affect timing metadata on the next playback initialization only. WAV speed, pitch, meter, and first-downbeat offset do not change.
 - Fifteen white keys select entries on the current page. The hardware toggle selects page 1 or 2; empty keys are inert. Selection and page changes take effect only while stopped.
 - Encoder pushes do not change pages or reveal hidden controls. Preserve power, shipping, and bootloader gestures.
 - LEDs distinguish available/selected entries, playback states, beat/downbeat, clipping, SD/config/audio errors, and pending/failed settings writes. Temporary level bars must not hide latched errors.
@@ -62,4 +67,4 @@ No heap allocation is permitted in audio or timing paths. FatFS operations run i
 
 ## Acceptance gates
 
-Host tests cover bounded set and RIFF parsing, all transport transitions, fractional timing, MIDI event ordering/failures, stereo mix routing, exact digital click isolation, settings recovery, and file/error handling. Firmware builds report SRAM, SRAM_EXEC, and SDRAM usage. Hardware tests verify real line-in channel mapping and orientation, both output pairs, headphone click isolation, card-stall playback, MIDI DIN jitter under SD/LED load (within 1 ms), receiver transport behavior, and a full-set soak without underruns. A successful compile alone is not stage-readiness evidence.
+Host tests cover bounded set and RIFF parsing, exact BPM rounding/rewrite and editor transitions, all transport transitions, fractional timing, MIDI event ordering/failures, stereo mix routing, exact digital click isolation, settings recovery, and file/error handling. Firmware builds report SRAM, SRAM_EXEC, and SDRAM usage. Hardware tests verify BPM selector/LED mappings, immediate writes and recovery on real cards, the five-second save limit, real line-in channel mapping and orientation, both output pairs, headphone click isolation, card-stall playback, MIDI DIN jitter under SD/LED load (within 1 ms), receiver transport behavior, and a full-set soak without underruns. A successful compile alone is not stage-readiness evidence.

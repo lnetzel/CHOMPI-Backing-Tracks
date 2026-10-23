@@ -797,6 +797,59 @@ uint32_t SDMMC_CmdStopTransfer(SDMMC_TypeDef *SDMMCx)
   return errorstate;
 }
 
+uint32_t SDMMC_CmdStopTransferWithTimeout(SDMMC_TypeDef *SDMMCx,
+                                          uint32_t Timeout)
+{
+  SDMMC_CmdInitTypeDef sdmmc_cmdinit;
+  uint32_t errorstate;
+
+  if(Timeout == 0U)
+  {
+    return SDMMC_ERROR_TIMEOUT;
+  }
+
+  sdmmc_cmdinit.Argument         = 0;
+  sdmmc_cmdinit.CmdIndex         = SDMMC_CMD_STOP_TRANSMISSION;
+  sdmmc_cmdinit.Response         = SDMMC_RESPONSE_SHORT;
+  sdmmc_cmdinit.WaitForInterrupt = SDMMC_WAIT_NO;
+  sdmmc_cmdinit.CPSM             = SDMMC_CPSM_ENABLE;
+
+  __SDMMC_CMDSTOP_ENABLE(SDMMCx);
+  __SDMMC_CMDTRANS_DISABLE(SDMMCx);
+  (void)SDMMC_SendCommand(SDMMCx, &sdmmc_cmdinit);
+  errorstate = SDMMC_GetCmdResp1(
+      SDMMCx, SDMMC_CMD_STOP_TRANSMISSION, Timeout);
+  __SDMMC_CMDSTOP_DISABLE(SDMMCx);
+
+  return errorstate;
+}
+
+uint32_t SDMMC_CmdSendStatusWithTimeout(SDMMC_TypeDef *SDMMCx,
+                                        uint32_t Argument,
+                                        uint32_t Timeout,
+                                        uint32_t *CardStatus)
+{
+  SDMMC_CmdInitTypeDef sdmmc_cmdinit;
+  uint32_t errorstate;
+
+  if(Timeout == 0U || CardStatus == NULL)
+  {
+    return SDMMC_ERROR_INVALID_PARAMETER;
+  }
+
+  sdmmc_cmdinit.Argument         = Argument;
+  sdmmc_cmdinit.CmdIndex         = SDMMC_CMD_SEND_STATUS;
+  sdmmc_cmdinit.Response         = SDMMC_RESPONSE_SHORT;
+  sdmmc_cmdinit.WaitForInterrupt = SDMMC_WAIT_NO;
+  sdmmc_cmdinit.CPSM             = SDMMC_CPSM_ENABLE;
+  (void)SDMMC_SendCommand(SDMMCx, &sdmmc_cmdinit);
+  errorstate = SDMMC_GetCmdResp1(
+      SDMMCx, SDMMC_CMD_SEND_STATUS, Timeout);
+  if(errorstate == SDMMC_ERROR_NONE)
+    *CardStatus = SDMMC_GetResponse(SDMMCx, SDMMC_RESP1);
+  return errorstate;
+}
+
 /**
   * @brief  Send the Select Deselect command and check the response.
   * @param  SDMMCx: Pointer to SDMMC register base

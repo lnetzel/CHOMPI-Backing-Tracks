@@ -80,11 +80,103 @@ int main(int argc, char **argv)
     assert(chompi::ParseBackingSet(kValidSet, std::strlen(kValidSet), set));
     assert(set.count == 1);
     assert(std::strcmp(set.songs[0].file, "TRACKS/a.wav") == 0);
-    assert(set.songs[0].bpm == 98.5f);
+    assert(set.songs[0].bpm_hundredths == 9850);
     assert(set.songs[0].meter_numerator == 6);
     assert(set.songs[0].meter_denominator == 8);
     assert(set.songs[0].advance == chompi::BackingAdvance::Wait);
     assert(set.songs[0].midi_clock);
+
+    const struct
+    {
+        const char *token;
+        uint16_t expected;
+        bool valid;
+    } bpm_cases[] = {{"30", 3000, true},
+                     {"125.54", 12554, true},
+                     {"125.5400", 12554, true},
+                     {"133.456", 13346, true},
+                     {"133.454", 13345, true},
+                     {"133.455", 13346, true},
+                     {"133.995", 13400, true},
+                     {"299.999", 30000, true},
+                     {"1.33456e2", 13346, true},
+                     {"133456e-3", 13346, true},
+                     {"29.999", 0, false},
+                     {"300.001", 0, false},
+                     {"1e999999999", 0, false},
+                     {"0", 0, false}};
+    for(const auto &test_case : bpm_cases)
+    {
+        char json[256];
+        const int json_length = std::snprintf(
+            json, sizeof(json),
+            "{\"version\":1,\"songs\":[{\"file\":\"TRACKS/a.wav\","
+            "\"bpm\":%s,\"meter\":[4,4],\"first_downbeat_ms\":0,"
+            "\"advance\":\"wait\"}]}",
+            test_case.token);
+        assert(json_length > 0 && static_cast<size_t>(json_length) < sizeof(json));
+        const bool parsed = chompi::ParseBackingSet(
+            json, static_cast<size_t>(json_length), set);
+        assert(parsed == test_case.valid);
+        if(parsed)
+            assert(set.songs[0].bpm_hundredths == test_case.expected);
+    }
+
+    char long_bpm[65] = "133.455";
+    size_t long_bpm_length = std::strlen(long_bpm);
+    while(long_bpm_length < 63)
+        long_bpm[long_bpm_length++] = '0';
+    long_bpm[long_bpm_length] = '\0';
+    char long_json[256];
+    int long_json_length = std::snprintf(
+        long_json, sizeof(long_json),
+        "{\"version\":1,\"songs\":[{\"file\":\"TRACKS/a.wav\","
+        "\"bpm\":%s,\"meter\":[4,4],\"first_downbeat_ms\":0,"
+        "\"advance\":\"wait\"}]}",
+        long_bpm);
+    assert(long_json_length > 0
+           && chompi::ParseBackingSet(long_json,
+                                     static_cast<size_t>(long_json_length), set));
+    assert(set.songs[0].bpm_hundredths == 13346);
+    long_bpm[long_bpm_length++] = '0';
+    long_bpm[long_bpm_length] = '\0';
+    long_json_length = std::snprintf(
+        long_json, sizeof(long_json),
+        "{\"version\":1,\"songs\":[{\"file\":\"TRACKS/a.wav\","
+        "\"bpm\":%s,\"meter\":[4,4],\"first_downbeat_ms\":0,"
+        "\"advance\":\"wait\"}]}",
+        long_bpm);
+    assert(long_json_length > 0
+           && !chompi::ParseBackingSet(long_json,
+                                      static_cast<size_t>(long_json_length), set));
+
+    char bpm_rewrite[256];
+    const char *exponent_set
+        = "{\"version\":1,\"songs\":[{\"file\":\"TRACKS/a.wav\","
+                    "\"bpm\":120,\"meter\":[4,4],\"first_downbeat_ms\":0,"
+          "\"advance\":\"wait\"}]}";
+    const size_t exponent_length = std::strlen(exponent_set);
+    std::memcpy(bpm_rewrite, exponent_set, exponent_length + 1);
+    size_t rewritten_length = exponent_length;
+    chompi::BackingBpmTokenBackup bpm_backup = {};
+    char too_small[128];
+    assert(exponent_length + 1 <= sizeof(too_small));
+    std::memcpy(too_small, exponent_set, exponent_length + 1);
+    const size_t unchanged_length = exponent_length;
+    assert(!chompi::RewriteBackingBpm(too_small, exponent_length + 1,
+                                     rewritten_length, 0, 12554));
+    assert(rewritten_length == unchanged_length);
+    assert(std::strcmp(too_small, exponent_set) == 0);
+    assert(chompi::RewriteBackingBpm(bpm_rewrite, sizeof(bpm_rewrite),
+                                    rewritten_length, 0, 12554, &bpm_backup));
+    assert(std::strstr(bpm_rewrite, "\"bpm\":125.54") != NULL);
+    assert(rewritten_length == std::strlen(bpm_rewrite));
+    assert(chompi::ParseBackingSet(bpm_rewrite, rewritten_length, set));
+    assert(set.songs[0].bpm_hundredths == 12554);
+    assert(chompi::RestoreBackingBpm(bpm_rewrite, sizeof(bpm_rewrite),
+                                     rewritten_length, bpm_backup));
+    assert(rewritten_length == exponent_length);
+    assert(std::memcmp(bpm_rewrite, exponent_set, exponent_length + 1) == 0);
 
     const char *midi_defaults
         = "{\"version\":1,\"songs\":["

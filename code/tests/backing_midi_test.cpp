@@ -163,7 +163,7 @@ int main()
     assert(entry_state.Enabled() && !entry_state.RestartArmed());
 
     chompi::BackingSong song = {};
-    song.bpm = 120.f;
+    song.bpm_hundredths = 12000;
     song.meter_numerator = 4;
     song.meter_denominator = 4;
     chompi::BackingTiming timing;

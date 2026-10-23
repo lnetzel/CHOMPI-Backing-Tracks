@@ -18,6 +18,11 @@
 - C# LED: green when the selected entry's MIDI preference is enabled, red when disabled.
 - While stopped, hold SHIFT/CHOMPI and press the second black key (D#) to cycle advance mode.
 - D# LED: red for wait, blue for auto, yellow for loop. The mode is saved to `set.json`.
+- While fully stopped, hold SHIFT/CHOMPI and press lower F# for hundreds, lower G# for tens, lower A# for ones, upper C# for tenths, or upper D# for hundredths. Release the chord to latch the position.
+- The selected position and saved digit light white. White keys 1-9 enter digits 1-9; white key 10 enters 0. A changed digit saves immediately and exits after success; choosing the existing digit exits without rewriting. Press SHIFT/CHOMPI to exit without changing BPM.
+- BPM editing locks song/page selection, encoders, transport, MIDI, and advance controls. The page switch follows its physical position when the editor exits.
+- BPM edits are limited to 30.00-300.00. Out-of-range choices are rejected. A known-safe save failure keeps the editor open for retry or SHIFT exit; an uncertain card commit lights the red status and requires reload/recovery.
+- BPM changes affect click, beat feedback, MIDI clock, and quantized timing on the next playback start. They do not change WAV playback speed or pitch.
 - Toggle while stopped: choose song page 1 or 2.
 - White keys while stopped: select one of 15 entries on the current page.
 - Play/Pause LED: blinking green while playing; solid green while paused or waiting for resume.
@@ -42,3 +47,5 @@ The status light turns amber for clipping and missing/unsaved/failed level setti
 If any WAV fails startup validation, its song slot blinks red and other song lights go dark. The whole set waits for that file to be fixed. A file-open failure on Play also blinks the affected slot red. Select the other page while stopped if necessary. WAVs must have consistent RIFF/chunk sizes as well as supported audio format.
 
 After SD-card removal or replacement, press Play while stopped to reload the set and levels. This reload does not start playback; press Play again to start the selected song.
+
+Existing BPM values with extra decimal places are read at the nearest hundredth, with decimal half-up rounding; for example, 133.456 is played and displayed as 133.46 without rewriting the card. A changed tempo is saved with two decimal places, such as `125.50` or `30.00`.

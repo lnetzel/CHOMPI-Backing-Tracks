@@ -1046,6 +1046,12 @@ uint32_t SDMMC_CmdEraseEndAdd(SDMMC_TypeDef *SDMMCx, uint32_t EndAdd);
 uint32_t SDMMC_CmdSDEraseEndAdd(SDMMC_TypeDef *SDMMCx, uint32_t EndAdd);
 uint32_t SDMMC_CmdErase(SDMMC_TypeDef *SDMMCx);
 uint32_t SDMMC_CmdStopTransfer(SDMMC_TypeDef *SDMMCx);
+uint32_t SDMMC_CmdStopTransferWithTimeout(SDMMC_TypeDef *SDMMCx,
+                                          uint32_t Timeout);
+uint32_t SDMMC_CmdSendStatusWithTimeout(SDMMC_TypeDef *SDMMCx,
+                                        uint32_t Argument,
+                                        uint32_t Timeout,
+                                        uint32_t *CardStatus);
 uint32_t SDMMC_CmdSelDesel(SDMMC_TypeDef *SDMMCx, uint64_t Addr);
 uint32_t SDMMC_CmdGoIdleState(SDMMC_TypeDef *SDMMCx);
 uint32_t SDMMC_CmdOperCond(SDMMC_TypeDef *SDMMCx);

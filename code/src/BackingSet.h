@@ -45,6 +45,130 @@ inline bool ReadNumber(const JSONPair_t &pair, double &number)
     return end == text + pair.valueLength && isfinite(number);
 }
 
+inline bool ReadBpmHundredths(const JSONPair_t &pair, uint16_t &hundredths)
+{
+    if(pair.jsonType != JSONNumber || pair.valueLength == 0
+       || pair.valueLength >= 64)
+        return false;
+
+    char digits[64];
+    size_t digit_count = 0;
+    size_t fractional_digits = 0;
+    size_t first_nonzero = 0;
+    int32_t exponent = 0;
+    size_t position = 0;
+    if(pair.value[position] == '-')
+        return false;
+
+    bool decimal_point = false;
+    while(position < pair.valueLength && pair.value[position] != 'e'
+          && pair.value[position] != 'E')
+    {
+        const char ch = pair.value[position++];
+        if(ch == '.')
+        {
+            if(decimal_point)
+                return false;
+            decimal_point = true;
+            continue;
+        }
+        if(ch < '0' || ch > '9' || digit_count >= sizeof(digits))
+            return false;
+        digits[digit_count++] = ch;
+        if(decimal_point)
+            ++fractional_digits;
+    }
+    if(digit_count == 0)
+        return false;
+
+    bool exponent_negative = false;
+    if(position < pair.valueLength)
+    {
+        ++position;
+        if(position < pair.valueLength
+           && (pair.value[position] == '+' || pair.value[position] == '-'))
+        {
+            exponent_negative = pair.value[position] == '-';
+            ++position;
+        }
+        if(position == pair.valueLength)
+            return false;
+        int32_t magnitude = 0;
+        for(; position < pair.valueLength; ++position)
+        {
+            const char ch = pair.value[position];
+            if(ch < '0' || ch > '9')
+                return false;
+            if(magnitude < 10000)
+            {
+                magnitude = magnitude * 10 + (ch - '0');
+                if(magnitude > 10000)
+                    magnitude = 10000;
+            }
+        }
+        exponent = exponent_negative ? -magnitude : magnitude;
+    }
+
+    while(first_nonzero < digit_count && digits[first_nonzero] == '0')
+        ++first_nonzero;
+    if(first_nonzero == digit_count)
+        return false;
+    const size_t significant_digits = digit_count - first_nonzero;
+    const int32_t decimal_order
+        = exponent - static_cast<int32_t>(fractional_digits)
+          + static_cast<int32_t>(significant_digits) - 1;
+    if(decimal_order == 1)
+    {
+        if(digits[first_nonzero] < '3')
+            return false;
+    }
+    else if(decimal_order == 2)
+    {
+        if(digits[first_nonzero] > '3')
+            return false;
+        if(digits[first_nonzero] == '3')
+        {
+            for(size_t i = first_nonzero + 1; i < digit_count; ++i)
+                if(digits[i] != '0')
+                    return false;
+        }
+    }
+    else
+        return false;
+
+    const int32_t shift
+        = exponent - static_cast<int32_t>(fractional_digits) + 2;
+    uint32_t rounded = 0;
+    if(shift >= 0)
+    {
+        if(static_cast<size_t>(shift) + significant_digits > 5)
+            return false;
+        for(size_t i = first_nonzero; i < digit_count; ++i)
+            rounded = rounded * 10u + static_cast<uint32_t>(digits[i] - '0');
+        for(int32_t i = 0; i < shift; ++i)
+            rounded *= 10u;
+    }
+    else
+    {
+        const size_t discarded = static_cast<size_t>(-shift);
+        const size_t kept_digits
+            = discarded < significant_digits ? significant_digits - discarded
+                                              : 0;
+        if(kept_digits > 5)
+            return false;
+        for(size_t i = 0; i < kept_digits; ++i)
+            rounded = rounded * 10u
+                      + static_cast<uint32_t>(digits[first_nonzero + i] - '0');
+        if(discarded <= significant_digits
+           && digits[first_nonzero + kept_digits] >= '5')
+            ++rounded;
+    }
+    if(rounded < 3000u || rounded > 30000u)
+        return false;
+    hundredths = static_cast<uint16_t>(rounded);
+    return true;
+}
+
 inline bool ReadInteger(const JSONPair_t &pair,
                         uint32_t minimum,
                         uint32_t maximum,
@@ -154,10 +278,8 @@ inline bool ParseSong(const char *json,
         else if(KeyIs(field, "bpm"))
         {
             bit = 1u << 1;
-            double bpm;
-            if(!ReadNumber(field, bpm) || bpm < 30.0 || bpm > 300.0)
+            if(!ReadBpmHundredths(field, song.bpm_hundredths))
                 return false;
-            song.bpm = static_cast<float>(bpm);
         }
         else if(KeyIs(field, "meter"))
         {
@@ -351,6 +473,181 @@ inline bool RewriteBackingAdvance(char *json,
         memcpy(json + token_offset, previous, sizeof(previous));
         return false;
     }
+    return true;
+}
+
+struct BackingBpmTokenBackup
+{
+    size_t token_offset = 0;
+    size_t original_length = 0;
+    size_t original_token_length = 0;
+    size_t replacement_token_length = 0;
+    char original_token[64] = {};
+    bool valid = false;
+};
+
+inline bool RewriteBackingBpm(char *json,
+                              size_t capacity,
+                              size_t &length,
+                              size_t song_index,
+                              uint16_t bpm_hundredths,
+                              BackingBpmTokenBackup *backup = NULL)
+{
+    if(json == NULL || length == 0 || length >= capacity
+       || json[length] != '\0' || bpm_hundredths < 3000u
+       || bpm_hundredths > 30000u)
+        return false;
+
+     BackingSet parsed = {};
+     if(!ParseBackingSet(json, length, parsed)
+         || song_index >= parsed.count)
+        return false;
+
+    size_t root_start = backing_set_detail::CollectionOffset(json, length);
+    size_t root_next = root_start;
+    JSONPair_t field = {};
+    JSONStatus_t status
+        = JSON_Iterate(json, length, &root_start, &root_next, &field);
+    bool songs_found = false;
+    bool token_found = false;
+    size_t token_offset = 0;
+    size_t token_length = 0;
+    while(status == JSONSuccess)
+    {
+        if(backing_set_detail::KeyIs(field, "songs"))
+        {
+            if(songs_found || field.jsonType != JSONArray)
+                return false;
+            songs_found = true;
+            size_t array_start = static_cast<size_t>(field.value - json);
+            size_t array_next = array_start;
+            JSONPair_t entry = {};
+            JSONStatus_t array_status = JSON_Iterate(
+                json, length, &array_start, &array_next, &entry);
+            size_t index = 0;
+            while(array_status == JSONSuccess)
+            {
+                if(index == song_index)
+                {
+                    size_t object_start
+                        = static_cast<size_t>(entry.value - json);
+                    size_t object_next = object_start;
+                    JSONPair_t song_field = {};
+                    JSONStatus_t object_status = JSON_Iterate(
+                        json, length, &object_start, &object_next, &song_field);
+                    while(object_status == JSONSuccess)
+                    {
+                        if(backing_set_detail::KeyIs(song_field, "bpm"))
+                        {
+                            if(token_found || song_field.jsonType != JSONNumber)
+                                return false;
+                            token_offset
+                                = static_cast<size_t>(song_field.value - json);
+                            token_length = song_field.valueLength;
+                            token_found = true;
+                        }
+                        object_status = JSON_Iterate(
+                            json, length, &object_start, &object_next,
+                            &song_field);
+                    }
+                    if(object_status != JSONNotFound || !token_found)
+                        return false;
+                    break;
+                }
+                ++index;
+                array_status = JSON_Iterate(json, length, &array_start,
+                                             &array_next, &entry);
+            }
+            if(array_status != JSONSuccess && array_status != JSONNotFound)
+                return false;
+        }
+        status = JSON_Iterate(json, length, &root_start, &root_next, &field);
+    }
+    if(status != JSONNotFound || !songs_found || !token_found
+       || token_offset > length || token_length > length - token_offset)
+        return false;
+
+    char replacement[7];
+    size_t replacement_length = 0;
+    const uint16_t whole = bpm_hundredths / 100u;
+    if(whole >= 100u)
+    {
+        replacement[replacement_length++]
+            = static_cast<char>('0' + whole / 100u);
+        replacement[replacement_length++]
+            = static_cast<char>('0' + (whole / 10u) % 10u);
+        replacement[replacement_length++]
+            = static_cast<char>('0' + whole % 10u);
+    }
+    else if(whole >= 10u)
+    {
+        replacement[replacement_length++]
+            = static_cast<char>('0' + whole / 10u);
+        replacement[replacement_length++]
+            = static_cast<char>('0' + whole % 10u);
+    }
+    else
+        replacement[replacement_length++] = static_cast<char>('0' + whole);
+    replacement[replacement_length++] = '.';
+    replacement[replacement_length++]
+        = static_cast<char>('0' + (bpm_hundredths / 10u) % 10u);
+    replacement[replacement_length++]
+        = static_cast<char>('0' + bpm_hundredths % 10u);
+
+    const size_t new_length
+        = length - token_length + replacement_length;
+    if(new_length >= capacity)
+        return false;
+    char previous[64];
+    if(token_length >= sizeof(previous))
+        return false;
+    memcpy(previous, json + token_offset, token_length);
+    const size_t suffix_length = length - token_offset - token_length;
+    memmove(json + token_offset + replacement_length,
+            json + token_offset + token_length, suffix_length + 1);
+    memcpy(json + token_offset, replacement, replacement_length);
+
+     if(!ParseBackingSet(json, new_length, parsed)
+         || parsed.songs[song_index].bpm_hundredths != bpm_hundredths)
+    {
+        memmove(json + token_offset + token_length,
+                json + token_offset + replacement_length, suffix_length + 1);
+        memcpy(json + token_offset, previous, token_length);
+        return false;
+    }
+    if(backup != NULL)
+    {
+        backup->token_offset = token_offset;
+        backup->original_length = length;
+        backup->original_token_length = token_length;
+        backup->replacement_token_length = replacement_length;
+        memcpy(backup->original_token, previous, token_length);
+        backup->original_token[token_length] = '\0';
+        backup->valid = true;
+    }
+    length = new_length;
+    return true;
+}
+
+inline bool RestoreBackingBpm(char *json,
+                              size_t capacity,
+                              size_t &length,
+                              BackingBpmTokenBackup &backup)
+{
+    if(json == NULL || !backup.valid || length >= capacity
+       || backup.token_offset > length
+       || backup.replacement_token_length > length - backup.token_offset
+       || backup.original_length >= capacity)
+        return false;
+    const size_t suffix_offset
+        = backup.token_offset + backup.replacement_token_length;
+    const size_t suffix_length = length - suffix_offset;
+    memmove(json + backup.token_offset + backup.original_token_length,
+            json + suffix_offset, suffix_length + 1);
+    memcpy(json + backup.token_offset, backup.original_token,
+           backup.original_token_length);
+    length = backup.original_length;
+    backup.valid = false;
     return true;
 }
 

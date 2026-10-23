@@ -8,7 +8,7 @@
 int main()
 {
     chompi::BackingSong song = {};
-    song.bpm = 120.f;
+    song.bpm_hundredths = 12000;
     song.meter_numerator = 4;
     song.meter_denominator = 4;
     song.first_downbeat_ms = 1;
@@ -48,12 +48,33 @@ int main()
     assert(click_count == 2);
     assert(downbeats == 1);
     assert(std::abs(first_click_interval - 24000) <= 1);
+
+    chompi::BackingSong rounded_song = {};
+    rounded_song.bpm_hundredths = 13346;
+    rounded_song.meter_numerator = 4;
+    rounded_song.meter_denominator = 4;
+    chompi::BackingSong explicit_song = rounded_song;
+    chompi::BackingTiming rounded_timing;
+    chompi::BackingTiming explicit_timing;
+    rounded_timing.Start(rounded_song);
+    explicit_timing.Start(explicit_song);
+    for(int frame = 0; frame < 96000; ++frame)
+    {
+        const chompi::BackingTimingEvent rounded_event
+            = rounded_timing.AdvanceFrame();
+        const chompi::BackingTimingEvent explicit_event
+            = explicit_timing.AdvanceFrame();
+        assert(rounded_event.midi_start == explicit_event.midi_start);
+        assert(rounded_event.midi_clock == explicit_event.midi_clock);
+        assert(rounded_event.click == explicit_event.click);
+        assert(rounded_event.downbeat == explicit_event.downbeat);
+    }
     assert(chompi::BackingMetronomeBlinkVisible(79u, 0u));
     assert(!chompi::BackingMetronomeBlinkVisible(80u, 0u));
-    assert(chompi::BackingMetronomeBlinkVisible(100u, 20u));
+    assert(!chompi::BackingMetronomeBlinkVisible(100u, 20u));
     assert(!chompi::BackingMetronomeBlinkVisible(100u, 19u));
 
-    song.bpm = 98.5f;
+    song.bpm_hundredths = 9850;
     song.meter_numerator = 6;
     song.meter_denominator = 8;
     song.first_downbeat_ms = 0;
@@ -69,7 +90,7 @@ int main()
     }
     assert(eighth_clicks >= 1);
 
-    song.bpm = 120.f;
+    song.bpm_hundredths = 12000;
     song.meter_numerator = 4;
     song.meter_denominator = 4;
     timing.Start(song);

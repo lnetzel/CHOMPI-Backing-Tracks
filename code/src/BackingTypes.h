@@ -59,7 +59,7 @@ inline BackingAdvanceDecision BackingAdvanceAtEof(BackingAdvance advance,
 struct BackingSong
 {
     char file[kBackingMaxPath + 1];
-    float bpm;
+    uint16_t bpm_hundredths;
     uint8_t meter_numerator;
     uint8_t meter_denominator;
     uint32_t first_downbeat_ms;
