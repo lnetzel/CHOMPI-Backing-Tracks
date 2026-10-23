@@ -122,6 +122,25 @@ class BackingBpmEditor
             return action;
         }
 
+        int selected_position = -1;
+        for(size_t i = 0; i < 5; ++i)
+        {
+            if(!selector_edges[i])
+                continue;
+            if(selected_position >= 0)
+            {
+                action.position = position_;
+                return action;
+            }
+            selected_position = static_cast<int>(i);
+        }
+        if(selected_position >= 0)
+        {
+            position_ = static_cast<BackingBpmPosition>(selected_position);
+            action.position = position_;
+            return action;
+        }
+
         size_t digit_key = 0;
         size_t digit_edges = 0;
         for(size_t i = 0; i < 10; ++i)

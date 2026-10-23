@@ -163,6 +163,30 @@ int main()
     action = boot_held_editor.Scan(boot_held_input, 12000);
     assert(action.entered && boot_held_editor.Active());
 
+    BackingBpmEditor navigation_editor;
+    BackingBpmEditorInput navigation_input = {};
+    navigation_input.stopped = true;
+    navigation_input.valid_entry = true;
+    navigation_input.clean_entry_chord = true;
+    navigation_editor.Initialize(navigation_input);
+    EnterPosition(navigation_editor, navigation_input, 4, 12554);
+    navigation_input.selector_down[3] = true;
+    action = navigation_editor.Scan(navigation_input, 12554);
+    assert(navigation_editor.Active());
+    assert(action.position == BackingBpmPosition::Tenths);
+    assert(navigation_editor.SelectedDigit(12554) == 5);
+    ReleaseInputs(navigation_input);
+    navigation_editor.Scan(navigation_input, 12554);
+    navigation_input.selector_down[2] = true;
+    action = navigation_editor.Scan(navigation_input, 12554);
+    assert(navigation_editor.Active());
+    assert(action.position == BackingBpmPosition::Ones);
+    ReleaseInputs(navigation_input);
+    navigation_editor.Scan(navigation_input, 12554);
+    navigation_input.shift_down = true;
+    action = navigation_editor.Scan(navigation_input, 12554);
+    assert(action.exit && !navigation_editor.Active());
+
     BackingBpmEditor sequence_editor;
     BackingBpmEditorInput sequence_input = {};
     sequence_input.stopped = true;

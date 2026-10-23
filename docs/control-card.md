@@ -18,7 +18,7 @@
 - C# LED: green when the selected entry's MIDI preference is enabled, red when disabled.
 - While stopped, hold SHIFT/CHOMPI and press the second black key (D#) to cycle advance mode.
 - D# LED: red for wait, blue for auto, yellow for loop. The mode is saved to `set.json`.
-- While fully stopped, hold SHIFT/CHOMPI and press lower F# for hundreds, lower G# for tens, lower A# for ones, upper C# for tenths, or upper D# for hundredths. Release the chord to latch the position.
+- While fully stopped, hold SHIFT/CHOMPI and press lower F# for hundreds, lower G# for tens, lower A# for ones, upper C# for tenths, or upper D# for hundredths. Release the chord to enter the editor. While active, press any of the five selectors directly to view or edit another position; no additional SHIFT press is needed.
 - The selected position and saved digit light white. White keys 1-9 enter digits 1-9; white key 10 enters 0. A changed digit saves immediately and exits after success; choosing the existing digit exits without rewriting. Press SHIFT/CHOMPI to exit without changing BPM.
 - BPM editing locks song/page selection, encoders, transport, MIDI, and advance controls. The page switch follows its physical position when the editor exits.
 - BPM edits are limited to 30.00-300.00. Out-of-range choices are rejected. A known-safe save failure keeps the editor open for retry or SHIFT exit; an uncertain card commit lights the red status and requires reload/recovery.
